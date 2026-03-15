@@ -1,5 +1,5 @@
 import meep as mp
-import meep.adjoint as mpa
+from typing import Dict
 import numpy as np
 import torch
 from .base import SimulatorInterface
