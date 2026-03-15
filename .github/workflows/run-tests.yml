@@ -26,7 +26,7 @@ jobs:
     - name: Run test script
       run: |
         export MPLBACKEND=Agg
-        python tests/test_core/test_simple_design.py
+        python -m tests.test_core.test_simple_design
 
     # 可选：如果未来添加了更多测试，可以启用 pytest
     # - name: Install pytest
