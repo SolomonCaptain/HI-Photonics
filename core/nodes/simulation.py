@@ -1,7 +1,7 @@
 from typing import Optional, Dict
 import torch
 from ..node import Node
-from ...interfaces.simulators.base import SimulatorInterface
+from interfaces.simulators.base import SimulatorInterface
 
 class SimulationNode(Node):
     """封装仿真器调用的节点"""

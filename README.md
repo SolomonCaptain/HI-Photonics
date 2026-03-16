@@ -1,7 +1,8 @@
 # HI-Photonics
 
----
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/SolomonCaptain/HI-Photonics)
+
+---
 
 ## 项目概述
 
@@ -224,3 +225,10 @@ class CustomSimulator(SimulatorInterface):
 2. **GPU 加速**: 默认使用 CUDA 13.0，确保显卡驱动兼容
 3. **仿真器依赖**: Lumerical, Meep 等外部仿真器需单独安装
 4. **内存管理**: 大规模仿真注意清理节点缓存 (`clear_cache=True`)
+
+---
+
+## 关于开发者
+
+个人博客：[http://blog.istaroth.xin/tags/hi-photonics](http://blog.istaroth.xin/tags/hi-photonics)
+邮箱：[zou12345@qq.com](mailto:zou12345@qq.com)
