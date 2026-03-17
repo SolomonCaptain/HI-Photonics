@@ -8,3 +8,5 @@ core/utils/__pycache__/
 interfaces/__pycache__/
 interfaces/simulators/__pycache__/
 tests/test_core/__pycache__/
+tests/test_interfaces/__pycache__/
+challenges/__pycache__/
