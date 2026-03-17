@@ -324,6 +324,153 @@ class ContrastiveLoss(nn.Module):
         return loss.mean()
 
 
+class MDNLoss(BaseLoss):
+    """
+    混合密度网络损失函数
+    
+    计算负对数似然损失，用于 MDN 训练。
+    
+    数学公式:
+        L = -log p(d|c) = -log sum_k π_k * N(d; μ_k, σ_k²)
+    
+    使用 log-sum-exp 技巧确保数值稳定性。
+    """
+    
+    def __init__(
+        self,
+        epsilon: float = 1e-8,
+        reduction: str = 'mean'
+    ):
+        """
+        Args:
+            epsilon: 数值稳定性常数
+            reduction: 归约方式
+        """
+        super().__init__(reduction)
+        self.epsilon = epsilon
+    
+    def forward(
+        self,
+        pi: Tensor,
+        mu: Tensor,
+        sigma: Tensor,
+        target: Tensor
+    ) -> Tensor:
+        """
+        计算负对数似然损失
+        
+        Args:
+            pi: 混合权重 [B, K]
+            mu: 均值 [B, K, D]
+            sigma: 标准差 [B, K, D]
+            target: 目标设计 [B, D]
+            
+        Returns:
+            负对数似然损失
+        """
+        import math
+        
+        # 确保目标形状正确
+        if target.dim() == 2:
+            target = target.unsqueeze(1).expand(-1, pi.size(1), -1)  # [B, K, D]
+        
+        # 计算每个高斯分量的对数概率
+        # log N(x; μ, σ²) = -0.5 * log(2π) - log(σ) - 0.5 * ((x-μ)/σ)²
+        log_2pi = math.log(2 * math.pi)
+        
+        log_prob_components = (
+            -0.5 * log_2pi 
+            - torch.log(sigma + self.epsilon) 
+            - 0.5 * ((target - mu) / (sigma + self.epsilon)) ** 2
+        )  # [B, K, D]
+        
+        # 对设计维度求和
+        log_prob_components = log_prob_components.sum(dim=-1)  # [B, K]
+        
+        # 使用 log-sum-exp 计算加权对数概率
+        log_pi = torch.log(pi + self.epsilon)
+        log_prob = torch.logsumexp(log_pi + log_prob_components, dim=-1)  # [B]
+        
+        # 负对数似然
+        nll = -log_prob
+        
+        return self._reduce(nll)
+
+
+class MDNRegularizedLoss(BaseLoss):
+    """
+    带正则化的 MDN 损失函数
+    
+    在负对数似然基础上添加:
+    1. 分量平衡损失：鼓励各分量被均匀使用
+    2. 熵正则化：控制分布的不确定性
+    """
+    
+    def __init__(
+        self,
+        balance_weight: float = 0.01,
+        entropy_weight: float = 0.001,
+        epsilon: float = 1e-8,
+        reduction: str = 'mean'
+    ):
+        """
+        Args:
+            balance_weight: 分量平衡权重
+            entropy_weight: 熵正则化权重
+            epsilon: 数值稳定性常数
+            reduction: 归约方式
+        """
+        super().__init__(reduction)
+        self.mdn_loss = MDNLoss(epsilon, 'none')
+        self.balance_weight = balance_weight
+        self.entropy_weight = entropy_weight
+    
+    def forward(
+        self,
+        pi: Tensor,
+        mu: Tensor,
+        sigma: Tensor,
+        target: Tensor
+    ) -> Tensor:
+        """
+        计算带正则化的损失
+        
+        Args:
+            pi: 混合权重 [B, K]
+            mu: 均值 [B, K, D]
+            sigma: 标准差 [B, K, D]
+            target: 目标设计 [B, D]
+            
+        Returns:
+            总损失
+        """
+        # 基础 NLL 损失
+        nll_loss = self.mdn_loss(pi, mu, sigma, target)
+        
+        # 分量平衡损失：鼓励各分量平均使用
+        # 使用平均权重分布作为目标
+        avg_pi = pi.mean(dim=0)  # [K]
+        target_pi = torch.ones_like(avg_pi) / pi.size(1)
+        balance_loss = F.kl_div(
+            torch.log(avg_pi + 1e-8),
+            target_pi,
+            reduction='sum'
+        )
+        
+        # 熵正则化：防止分布过于尖锐
+        entropy = -torch.sum(pi * torch.log(pi + 1e-8), dim=-1).mean()
+        entropy_loss = -entropy  # 最大化熵
+        
+        # 总损失
+        total_loss = (
+            nll_loss 
+            + self.balance_weight * balance_loss 
+            + self.entropy_weight * entropy_loss
+        )
+        
+        return self._reduce(total_loss)
+
+
 # 损失函数工厂
 LOSS_REGISTRY = {
     'mse': nn.MSELoss,
@@ -334,7 +481,9 @@ LOSS_REGISTRY = {
     'design': DesignLoss,
     'tandem': TandemLoss,
     'physics': PhysicsInformedLoss,
-    'contrastive': ContrastiveLoss
+    'contrastive': ContrastiveLoss,
+    'mdn': MDNLoss,
+    'mdn_regularized': MDNRegularizedLoss
 }
 
 

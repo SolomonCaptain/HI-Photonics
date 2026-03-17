@@ -467,3 +467,226 @@ def create_tnn_node_for_challenge(
         mode=mode,
         device=device
     )
+
+
+class MDNNode(Node):
+    """
+    混合密度网络节点
+    
+    封装 MDN 模型，支持：
+    1. 获取设计分布参数
+    2. 从分布中采样
+    3. 选择最优设计
+    
+    使用示例:
+    ```python
+    from models.inverse.mdn import MDN, MDNConfig
+    from core.nodes.neural_network import MDNNode
+    
+    # 创建 MDN
+    config = MDNConfig(
+        input_dim=3,
+        output_dim=200*22,
+        design_shape=(200, 22),
+        n_components=5
+    )
+    mdn = MDN(config)
+    
+    # 创建目标性能节点
+    target_perf = TargetPerformanceNode('target', torch.tensor([[0.85, 0.8, 0.1]]))
+    
+    # 创建 MDN 节点
+    mdn_node = MDNNode('mdn', mdn, target_perf)
+    
+    # 方式1: 获取分布参数
+    pi, mu, sigma = mdn_node.forward(mode='params')
+    
+    # 方式2: 采样多个设计
+    samples = mdn_node.forward(mode='sample', n_samples=10)
+    
+    # 方式3: 获取最可能的设计
+    best_design = mdn_node.forward(mode='mode')
+    ```
+    """
+    
+    def __init__(
+        self,
+        name: str,
+        mdn_model,  # MDN 类型
+        performance_node: Optional[Node] = None,
+        forward_model: Optional[nn.Module] = None,
+        device: str = 'auto'
+    ):
+        """
+        Args:
+            name: 节点名称
+            mdn_model: MDN 模型
+            performance_node: 性能目标节点
+            forward_model: 前向模型（用于 sample_best 模式）
+            device: 计算设备
+        """
+        super().__init__(name)
+        self.mdn = mdn_model
+        self.forward_model = forward_model
+        
+        # 设置设备
+        if device == 'auto':
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        else:
+            self.device = torch.device(device)
+        
+        self.mdn.to(self.device)
+        if self.forward_model is not None:
+            self.forward_model.to(self.device)
+        
+        # 连接输入节点
+        if performance_node is not None:
+            self.add_input(performance_node)
+    
+    def forward(
+        self,
+        mode: str = 'sample',
+        n_samples: int = 1,
+        **kwargs
+    ) -> Union[Tensor, Tuple[Tensor, Tensor, Tensor]]:
+        """
+        根据模式执行不同操作
+        
+        Args:
+            mode: 运行模式
+                - 'params': 返回分布参数 (pi, mu, sigma)
+                - 'sample': 采样多个设计
+                - 'mode': 返回最可能的设计
+                - 'best': 采样并选择最优设计
+            n_samples: 采样数量（仅 sample 和 best 模式）
+            
+        Returns:
+            params 模式: (pi, mu, sigma)
+            sample 模式: samples [B, n_samples, H, W]
+            mode 模式: best_design [B, H, W]
+            best 模式: (best_design, best_performance)
+        """
+        if not self._inputs:
+            raise ValueError("No performance node connected")
+        
+        target_performance = self._inputs[0].forward(**kwargs)
+        target_performance = target_performance.to(self.device)
+        
+        if mode == 'params':
+            return self._get_params(target_performance)
+        elif mode == 'sample':
+            return self._sample(target_performance, n_samples)
+        elif mode == 'mode':
+            return self._get_mode(target_performance)
+        elif mode == 'best':
+            return self._sample_best(target_performance, n_samples)
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
+    
+    def _get_params(self, performance: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+        """获取分布参数"""
+        self.mdn.eval()
+        with torch.no_grad():
+            pi, mu, sigma = self.mdn(performance)
+        return pi, mu, sigma
+    
+    def _sample(self, performance: Tensor, n_samples: int) -> Tensor:
+        """采样设计"""
+        self.mdn.eval()
+        with torch.no_grad():
+            samples = self.mdn.sample(performance, n_samples)
+        return samples
+    
+    def _get_mode(self, performance: Tensor) -> Tensor:
+        """获取最可能的设计"""
+        self.mdn.eval()
+        with torch.no_grad():
+            design = self.mdn.sample_mode(performance)
+        return design
+    
+    def _sample_best(
+        self,
+        performance: Tensor,
+        n_samples: int
+    ) -> Tuple[Tensor, Tensor]:
+        """采样并选择最优设计"""
+        if self.forward_model is None:
+            raise ValueError("Forward model required for 'best' mode")
+        
+        self.mdn.eval()
+        self.forward_model.eval()
+        
+        with torch.no_grad():
+            best_design, best_perf = self.mdn.sample_best(
+                performance, self.forward_model, n_samples
+            )
+        
+        return best_design, best_perf
+    
+    def get_distribution(self, performance: Optional[Tensor] = None):
+        """
+        获取高斯混合分布对象
+        
+        Args:
+            performance: 性能目标（如果未提供则使用输入节点）
+            
+        Returns:
+            GaussianMixtureDistribution 对象
+        """
+        if performance is None:
+            if not self._inputs:
+                raise ValueError("No performance provided or connected")
+            performance = self._inputs[0].forward()
+        
+        performance = performance.to(self.device)
+        return self.mdn.get_distribution(performance)
+    
+    def load_pretrained(self, path: Union[str, Path]):
+        """加载预训练模型"""
+        self.mdn.load(path)
+    
+    def save_model(self, path: Union[str, Path]):
+        """保存模型"""
+        self.mdn.save(path)
+
+
+def create_mdn_node_for_challenge(
+    challenge_name: str,
+    n_components: int = 5,
+    performance_dim: int = 3,
+    pretrained_path: Optional[str] = None,
+    forward_model: Optional[nn.Module] = None,
+    device: str = 'auto'
+) -> MDNNode:
+    """
+    为特定挑战创建 MDN 节点
+    
+    Args:
+        challenge_name: 挑战名称
+        n_components: 高斯分量数
+        performance_dim: 性能指标维度
+        pretrained_path: 预训练模型路径
+        forward_model: 前向模型（可选）
+        device: 计算设备
+        
+    Returns:
+        配置好的 MDNNode
+    """
+    from models.inverse.mdn import create_mdn_for_challenge
+    
+    mdn = create_mdn_for_challenge(
+        challenge_name,
+        n_components=n_components,
+        performance_dim=performance_dim,
+        device=device
+    )
+    
+    if pretrained_path:
+        mdn.load(pretrained_path)
+    
+    return MDNNode(
+        name=f'mdn_{challenge_name}',
+        mdn_model=mdn,
+        forward_model=forward_model,
+        device=device
+    )

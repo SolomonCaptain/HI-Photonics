@@ -9,4 +9,8 @@ interfaces/__pycache__/
 interfaces/simulators/__pycache__/
 tests/test_core/__pycache__/
 tests/test_interfaces/__pycache__/
+tests/test_models/__pycache__/
 challenges/__pycache__/
+models/__pycache__/
+models/inverse/__pycache__/
+models/training/__pycache__/

@@ -22,6 +22,15 @@ from models.inverse.tnn import (
     create_tnn_for_challenge
 )
 
+from models.inverse.mdn import (
+    MDN,
+    MDNConfig,
+    GaussianMixtureDistribution,
+    GaussianMixtureParameters,
+    MDNTandemNetwork,
+    create_mdn_for_challenge
+)
+
 from models.training.losses import (
     BaseLoss,
     PerformanceLoss,
@@ -29,6 +38,8 @@ from models.training.losses import (
     TandemLoss,
     PhysicsInformedLoss,
     ContrastiveLoss,
+    MDNLoss,
+    MDNRegularizedLoss,
     get_loss
 )
 
@@ -76,6 +87,14 @@ __all__ = [
     'InverseNetworkConfig',
     'create_tnn_for_challenge',
     
+    # MDN
+    'MDN',
+    'MDNConfig',
+    'GaussianMixtureDistribution',
+    'GaussianMixtureParameters',
+    'MDNTandemNetwork',
+    'create_mdn_for_challenge',
+    
     # Losses
     'BaseLoss',
     'PerformanceLoss',
@@ -83,6 +102,8 @@ __all__ = [
     'TandemLoss',
     'PhysicsInformedLoss',
     'ContrastiveLoss',
+    'MDNLoss',
+    'MDNRegularizedLoss',
     'get_loss',
     
     # Metrics
