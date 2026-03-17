@@ -690,3 +690,275 @@ def create_mdn_node_for_challenge(
         forward_model=forward_model,
         device=device
     )
+
+
+class CGANNode(Node):
+    """
+    条件生成对抗网络节点
+    
+    封装 CGAN 模型，支持：
+    1. 条件生成：从性能目标生成多样化设计
+    2. 多样本生成：为同一目标生成多个候选设计
+    3. 判别评估：评估设计的真实性
+    
+    使用示例:
+    ```python
+    from models.inverse.cgan import CGAN, CGANConfig
+    from core.nodes.neural_network import CGANNode
+    
+    # 创建 CGAN
+    config = CGANConfig(
+        generator_config=GeneratorConfig(design_shape=(200, 22)),
+        discriminator_config=DiscriminatorConfig(design_shape=(200, 22))
+    )
+    cgan = CGAN(config)
+    
+    # 创建目标性能节点
+    target_perf = TargetPerformanceNode('target', torch.tensor([[0.85, 0.1, 0.05]]))
+    
+    # 创建 CGAN 节点
+    cgan_node = CGANNode('cgan', cgan, target_perf)
+    
+    # 方式1: 生成单个设计
+    design = cgan_node.forward()
+    
+    # 方式2: 生成多个候选设计
+    designs = cgan_node.forward(num_samples=10)
+    
+    # 方式3: 评估设计真实性
+    validity = cgan_node.discriminate(design, target_perf.forward())
+    ```
+    """
+    
+    def __init__(
+        self,
+        name: str,
+        cgan_model,  # CGAN 类型
+        performance_node: Optional[Node] = None,
+        forward_model: Optional[nn.Module] = None,
+        device: str = 'auto'
+    ):
+        """
+        Args:
+            name: 节点名称
+            cgan_model: CGAN 模型
+            performance_node: 性能目标节点
+            forward_model: 前向模型（用于评估生成质量）
+            device: 计算设备
+        """
+        super().__init__(name)
+        self.cgan = cgan_model
+        self.forward_model = forward_model
+        
+        # 设置设备
+        if device == 'auto':
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        else:
+            self.device = torch.device(device)
+        
+        self.cgan.to(self.device)
+        if self.forward_model is not None:
+            self.forward_model.to(self.device)
+        
+        # 连接输入节点
+        if performance_node is not None:
+            self.add_input(performance_node)
+    
+    def forward(
+        self,
+        num_samples: int = 1,
+        noise: Optional[Tensor] = None,
+        **kwargs
+    ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
+        """
+        生成设计
+        
+        Args:
+            num_samples: 每个条件生成的设计数量
+            noise: 自定义噪声（可选）
+            
+        Returns:
+            单样本模式: design [B, H, W]
+            多样本模式: 如果有 forward_model 则返回 (designs, performances)
+        """
+        if not self._inputs:
+            raise ValueError("No performance node connected")
+        
+        condition = self._inputs[0].forward(**kwargs)
+        condition = condition.to(self.device)
+        
+        # 生成设计
+        designs = self.cgan.generate(condition, num_samples, noise)
+        
+        # 如果有前向模型，评估生成设计的性能
+        if self.forward_model is not None and num_samples > 1:
+            performances = self._evaluate_designs(designs)
+            return designs, performances
+        
+        return designs
+    
+    def _evaluate_designs(self, designs: Tensor) -> Tensor:
+        """评估生成设计的性能"""
+        self.forward_model.eval()
+        with torch.no_grad():
+            designs = designs.to(self.device)
+            performances = self.forward_model(designs)
+        return performances
+    
+    def discriminate(
+        self,
+        design: Tensor,
+        condition: Optional[Tensor] = None
+    ) -> Tensor:
+        """
+        评估设计的真实性
+        
+        Args:
+            design: 设计参数
+            condition: 条件向量（如果为 None 则使用输入节点）
+            
+        Returns:
+            真实性分数
+        """
+        if condition is None:
+            if not self._inputs:
+                raise ValueError("No condition provided or connected")
+            condition = self._inputs[0].forward()
+        
+        design = design.to(self.device)
+        condition = condition.to(self.device)
+        
+        return self.cgan.discriminate(design, condition)
+    
+    def sample_best(
+        self,
+        num_samples: int = 10,
+        **kwargs
+    ) -> Tuple[Tensor, Tensor]:
+        """
+        生成多个设计并选择最优
+        
+        Args:
+            num_samples: 采样数量
+            
+        Returns:
+            (best_design, best_performance)
+        """
+        if self.forward_model is None:
+            raise ValueError("Forward model required for sample_best")
+        
+        designs, performances = self.forward(num_samples=num_samples, **kwargs)
+        
+        # 选择最接近目标的设计
+        if self._inputs:
+            target = self._inputs[0].forward(**kwargs).to(self.device)
+            # 扩展目标以匹配样本数
+            target = target.repeat_interleave(num_samples, dim=0)
+            # 计算与目标的距离
+            distances = torch.norm(performances - target, dim=-1)
+            best_idx = distances.argmin()
+            
+            batch_size = target.size(0) // num_samples
+            design_shape = designs.shape[1:]
+            
+            designs = designs.view(batch_size, num_samples, *design_shape)
+            performances = performances.view(batch_size, num_samples, -1)
+            
+            best_design = designs[0, best_idx % num_samples]
+            best_perf = performances[0, best_idx % num_samples]
+            
+            return best_design, best_perf
+        
+        return designs[0], performances[0]
+    
+    def get_latent_interpolation(
+        self,
+        condition: Tensor,
+        start_noise: Optional[Tensor] = None,
+        end_noise: Optional[Tensor] = None,
+        num_steps: int = 10
+    ) -> Tensor:
+        """
+        在潜在空间中插值生成设计序列
+        
+        Args:
+            condition: 条件向量
+            start_noise: 起始噪声
+            end_noise: 终止噪声
+            num_steps: 插值步数
+            
+        Returns:
+            插值设计序列 [num_steps, H, W]
+        """
+        condition = condition.to(self.device)
+        
+        if start_noise is None:
+            start_noise = torch.randn(1, self.cgan.latent_dim, device=self.device)
+        if end_noise is None:
+            end_noise = torch.randn(1, self.cgan.latent_dim, device=self.device)
+        
+        # 线性插值
+        alphas = torch.linspace(0, 1, num_steps, device=self.device)
+        designs = []
+        
+        self.cgan.generator.eval()
+        with torch.no_grad():
+            for alpha in alphas:
+                noise = (1 - alpha) * start_noise + alpha * end_noise
+                design = self.cgan.generator(condition, noise)
+                designs.append(design)
+        
+        return torch.cat(designs, dim=0)
+    
+    def load_pretrained(self, path: Union[str, Path]):
+        """加载预训练模型"""
+        self.cgan.load(path)
+    
+    def save_model(self, path: Union[str, Path]):
+        """保存模型"""
+        self.cgan.save(path)
+
+
+def create_cgan_node_for_challenge(
+    challenge_name: str,
+    condition_dim: int = 3,
+    latent_dim: int = 128,
+    gan_type: str = 'wgan-gp',
+    pretrained_path: Optional[str] = None,
+    forward_model: Optional[nn.Module] = None,
+    device: str = 'auto'
+) -> CGANNode:
+    """
+    为特定挑战创建 CGAN 节点
+    
+    Args:
+        challenge_name: 挑战名称
+        condition_dim: 条件维度
+        latent_dim: 潜在空间维度
+        gan_type: GAN 类型
+        pretrained_path: 预训练模型路径
+        forward_model: 前向模型（可选）
+        device: 计算设备
+        
+    Returns:
+        配置好的 CGANNode
+    """
+    from models.inverse.cgan import create_cgan_for_challenge
+    
+    cgan = create_cgan_for_challenge(
+        challenge_name,
+        condition_dim=condition_dim,
+        latent_dim=latent_dim,
+        gan_type=gan_type,
+        device=device
+    )
+    
+    if pretrained_path:
+        cgan.load(pretrained_path)
+    
+    return CGANNode(
+        name=f'cgan_{challenge_name}',
+        cgan_model=cgan,
+        forward_model=forward_model,
+        device=device
+    )

@@ -31,6 +31,17 @@ from models.inverse.mdn import (
     create_mdn_for_challenge
 )
 
+from models.inverse.cgan import (
+    CGAN,
+    CGANConfig,
+    ConditionalGenerator,
+    ConditionalDiscriminator,
+    GeneratorConfig,
+    DiscriminatorConfig,
+    WGAN_GP,
+    create_cgan_for_challenge
+)
+
 from models.training.losses import (
     BaseLoss,
     PerformanceLoss,
@@ -40,6 +51,10 @@ from models.training.losses import (
     ContrastiveLoss,
     MDNLoss,
     MDNRegularizedLoss,
+    GANLoss,
+    GradientPenaltyLoss,
+    ConditionalConsistencyLoss,
+    CGANCombinedLoss,
     get_loss
 )
 
@@ -95,6 +110,16 @@ __all__ = [
     'MDNTandemNetwork',
     'create_mdn_for_challenge',
     
+    # CGAN
+    'CGAN',
+    'CGANConfig',
+    'ConditionalGenerator',
+    'ConditionalDiscriminator',
+    'GeneratorConfig',
+    'DiscriminatorConfig',
+    'WGAN_GP',
+    'create_cgan_for_challenge',
+    
     # Losses
     'BaseLoss',
     'PerformanceLoss',
@@ -104,6 +129,10 @@ __all__ = [
     'ContrastiveLoss',
     'MDNLoss',
     'MDNRegularizedLoss',
+    'GANLoss',
+    'GradientPenaltyLoss',
+    'ConditionalConsistencyLoss',
+    'CGANCombinedLoss',
     'get_loss',
     
     # Metrics

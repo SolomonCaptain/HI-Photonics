@@ -471,6 +471,320 @@ class MDNRegularizedLoss(BaseLoss):
         return self._reduce(total_loss)
 
 
+class GANLoss(BaseLoss):
+    """
+    生成对抗网络损失函数
+    
+    支持多种 GAN 变体:
+    - 标准 GAN (BCE 损失)
+    - LSGAN (最小二乘)
+    - WGAN (Wasserstein)
+    - Hinge 损失
+    """
+    
+    def __init__(
+        self,
+        gan_type: str = 'gan',
+        reduction: str = 'mean'
+    ):
+        """
+        Args:
+            gan_type: GAN 类型 ('gan', 'lsgan', 'wgan', 'hinge')
+            reduction: 归约方式
+        """
+        super().__init__(reduction)
+        self.gan_type = gan_type.lower()
+    
+    def discriminator_loss(
+        self,
+        real_validity: Tensor,
+        fake_validity: Tensor
+    ) -> Tensor:
+        """
+        计算判别器损失
+        
+        Args:
+            real_validity: 真实样本的判别分数 [B, 1]
+            fake_validity: 生成样本的判别分数 [B, 1]
+            
+        Returns:
+            判别器损失
+        """
+        if self.gan_type == 'gan':
+            # 标准 GAN: -log(D(x)) - log(1 - D(G(z)))
+            real_loss = F.binary_cross_entropy_with_logits(
+                real_validity, torch.ones_like(real_validity), reduction='none'
+            )
+            fake_loss = F.binary_cross_entropy_with_logits(
+                fake_validity, torch.zeros_like(fake_validity), reduction='none'
+            )
+            loss = real_loss + fake_loss
+            
+        elif self.gan_type == 'lsgan':
+            # LSGAN: (D(x) - 1)^2 + D(G(z))^2
+            real_loss = F.mse_loss(
+                real_validity, torch.ones_like(real_validity), reduction='none'
+            )
+            fake_loss = F.mse_loss(
+                fake_validity, torch.zeros_like(fake_validity), reduction='none'
+            )
+            loss = real_loss + fake_loss
+            
+        elif self.gan_type == 'wgan':
+            # WGAN: -D(x) + D(G(z))
+            loss = -real_validity + fake_validity
+            
+        elif self.gan_type == 'hinge':
+            # Hinge: max(0, 1 - D(x)) + max(0, 1 + D(G(z)))
+            real_loss = F.relu(1.0 - real_validity)
+            fake_loss = F.relu(1.0 + fake_validity)
+            loss = real_loss + fake_loss
+        else:
+            raise ValueError(f"Unknown GAN type: {self.gan_type}")
+        
+        return self._reduce(loss)
+    
+    def generator_loss(
+        self,
+        fake_validity: Tensor,
+        target_is_real: bool = True
+    ) -> Tensor:
+        """
+        计算生成器损失
+        
+        Args:
+            fake_validity: 生成样本的判别分数 [B, 1]
+            target_is_real: 目标是真实样本（默认 True）
+            
+        Returns:
+            生成器损失
+        """
+        if self.gan_type == 'gan':
+            target = torch.ones_like(fake_validity) if target_is_real else torch.zeros_like(fake_validity)
+            loss = F.binary_cross_entropy_with_logits(fake_validity, target, reduction='none')
+            
+        elif self.gan_type == 'lsgan':
+            target = torch.ones_like(fake_validity) if target_is_real else torch.zeros_like(fake_validity)
+            loss = F.mse_loss(fake_validity, target, reduction='none')
+            
+        elif self.gan_type == 'wgan':
+            # 最大化 D(G(z)) 等价于最小化 -D(G(z))
+            loss = -fake_validity if target_is_real else fake_validity
+            
+        elif self.gan_type == 'hinge':
+            # Hinge 生成器损失: -D(G(z))
+            loss = -fake_validity
+        else:
+            raise ValueError(f"Unknown GAN type: {self.gan_type}")
+        
+        return self._reduce(loss)
+
+
+class GradientPenaltyLoss(nn.Module):
+    """
+    梯度惩罚损失
+    
+    用于 WGAN-GP，强制判别器满足 Lipschitz 约束。
+    """
+    
+    def __init__(self, lambda_gp: float = 10.0):
+        """
+        Args:
+            lambda_gp: 梯度惩罚系数
+        """
+        super().__init__()
+        self.lambda_gp = lambda_gp
+    
+    def forward(
+        self,
+        discriminator: nn.Module,
+        real_data: Tensor,
+        fake_data: Tensor,
+        condition: Optional[Tensor] = None
+    ) -> Tensor:
+        """
+        计算梯度惩罚
+        
+        Args:
+            discriminator: 判别器网络
+            real_data: 真实数据 [B, ...]
+            fake_data: 生成数据 [B, ...]
+            condition: 条件向量 [B, C]（可选）
+            
+        Returns:
+            梯度惩罚损失
+        """
+        batch_size = real_data.size(0)
+        
+        # 随机插值因子
+        alpha = torch.rand(batch_size, 1, device=real_data.device)
+        
+        # 对空间维度进行广播
+        for _ in range(real_data.dim() - 2):
+            alpha = alpha.unsqueeze(-1)
+        
+        # 插值样本
+        interpolates = alpha * real_data + (1 - alpha) * fake_data
+        interpolates.requires_grad_(True)
+        
+        # 判别器前向传播
+        if condition is not None:
+            disc_output = discriminator(interpolates, condition)
+        else:
+            disc_output = discriminator(interpolates)
+        
+        # 计算梯度
+        gradients = torch.autograd.grad(
+            outputs=disc_output,
+            inputs=interpolates,
+            grad_outputs=torch.ones_like(disc_output),
+            create_graph=True,
+            retain_graph=True,
+            only_inputs=True
+        )[0]
+        
+        # 计算梯度范数
+        gradients = gradients.view(batch_size, -1)
+        gradient_norm = gradients.norm(2, dim=1)
+        
+        # 梯度惩罚: (||∇||_2 - 1)^2
+        gradient_penalty = ((gradient_norm - 1) ** 2).mean()
+        
+        return self.lambda_gp * gradient_penalty
+
+
+class ConditionalConsistencyLoss(BaseLoss):
+    """
+    条件一致性损失
+    
+    确保生成的设计满足给定的条件约束。
+    通过代理模型评估生成性能与目标条件的差异。
+    """
+    
+    def __init__(
+        self,
+        weight: float = 1.0,
+        loss_type: str = 'mse',
+        reduction: str = 'mean'
+    ):
+        """
+        Args:
+            weight: 损失权重
+            loss_type: 损失类型 ('mse', 'mae')
+            reduction: 归约方式
+        """
+        super().__init__(reduction)
+        self.weight = weight
+        self.loss_fn = nn.MSELoss(reduction='none') if loss_type == 'mse' else nn.L1Loss(reduction='none')
+    
+    def forward(
+        self,
+        generated_performance: Tensor,
+        target_condition: Tensor
+    ) -> Tensor:
+        """
+        计算条件一致性损失
+        
+        Args:
+            generated_performance: 生成设计的预测性能 [B, D]
+            target_condition: 目标条件 [B, D]
+            
+        Returns:
+            条件一致性损失
+        """
+        loss = self.loss_fn(generated_performance, target_condition)
+        return self.weight * self._reduce(loss)
+
+
+class CGANCombinedLoss(nn.Module):
+    """
+    CGAN 组合损失
+    
+    组合对抗损失、条件一致性损失和正则化损失。
+    用于 CGAN 生成器训练。
+    """
+    
+    def __init__(
+        self,
+        gan_type: str = 'wgan-gp',
+        condition_weight: float = 1.0,
+        diversity_weight: float = 0.0,
+        lambda_gp: float = 10.0
+    ):
+        """
+        Args:
+            gan_type: GAN 类型
+            condition_weight: 条件一致性权重
+            diversity_weight: 多样性损失权重
+            lambda_gp: 梯度惩罚系数
+        """
+        super().__init__()
+        self.gan_loss = GANLoss(gan_type)
+        self.gp_loss = GradientPenaltyLoss(lambda_gp)
+        self.condition_weight = condition_weight
+        self.diversity_weight = diversity_weight
+    
+    def forward(
+        self,
+        fake_validity: Tensor,
+        generated_performance: Optional[Tensor] = None,
+        target_condition: Optional[Tensor] = None,
+        designs: Optional[Tensor] = None
+    ) -> Dict[str, Tensor]:
+        """
+        计算组合损失
+        
+        Args:
+            fake_validity: 判别器对生成样本的评分
+            generated_performance: 生成设计的预测性能
+            target_condition: 目标条件
+            designs: 生成的设计（用于多样性计算）
+            
+        Returns:
+            损失字典
+        """
+        losses = {}
+        
+        # 对抗损失
+        losses['gan'] = self.gan_loss.generator_loss(fake_validity)
+        total = losses['gan']
+        
+        # 条件一致性损失
+        if generated_performance is not None and target_condition is not None:
+            losses['condition'] = F.mse_loss(generated_performance, target_condition)
+            total += self.condition_weight * losses['condition']
+        
+        # 多样性损失
+        if designs is not None and self.diversity_weight > 0:
+            losses['diversity'] = self._compute_diversity(designs)
+            total += self.diversity_weight * losses['diversity']
+        
+        losses['total'] = total
+        
+        return losses
+    
+    def _compute_diversity(self, designs: Tensor) -> Tensor:
+        """计算多样性损失（鼓励不同样本间差异）"""
+        if designs.size(0) < 2:
+            return torch.tensor(0.0, device=designs.device)
+        
+        designs_flat = designs.view(designs.size(0), -1)
+        # 计算样本间距离
+        dist = torch.pdist(designs_flat)
+        # 返回负距离，最小化时增加多样性
+        return -dist.mean()
+    
+    def compute_gp(
+        self,
+        discriminator: nn.Module,
+        real_designs: Tensor,
+        fake_designs: Tensor,
+        conditions: Tensor
+    ) -> Tensor:
+        """计算梯度惩罚"""
+        return self.gp_loss(discriminator, real_designs, fake_designs, conditions)
+
+
 # 损失函数工厂
 LOSS_REGISTRY = {
     'mse': nn.MSELoss,
@@ -483,7 +797,11 @@ LOSS_REGISTRY = {
     'physics': PhysicsInformedLoss,
     'contrastive': ContrastiveLoss,
     'mdn': MDNLoss,
-    'mdn_regularized': MDNRegularizedLoss
+    'mdn_regularized': MDNRegularizedLoss,
+    'gan': GANLoss,
+    'gradient_penalty': GradientPenaltyLoss,
+    'conditional_consistency': ConditionalConsistencyLoss,
+    'cgan_combined': CGANCombinedLoss
 }
 
 
