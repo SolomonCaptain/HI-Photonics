@@ -4,155 +4,177 @@
 
 ---
 
-## 项目概述
+## 项目概述 
 
-HI-Photonics 是一个光子学逆向设计框架，基于 PyTorch 构建计算图架构，支持多种仿真后端（Meep、Lumerical、RCWA）和深度学习模型（CGAN、HiLab、MDN、PINN、TNN）进行光子器件的自动化设计与优化。
+HI-Photonics 是一个基于深度学习的**光子学逆向设计框架**，旨在通过神经网络模型实现高效的光子器件设计与优化。该项目整合了多种先进的深度学习方法，包括 Tandem Network、混合密度网络(MDN)、条件生成对抗网络(CGAN)、物理信息神经网络(PINN) 和图神经网络(GNN)。
 
-**核心特性：**
-- 节点式计算图框架，支持自动微分和伴随方法
-- 多仿真器统一接口（Meep FDTD、RCWA 等）
-- 内置多种设计挑战（光栅耦合器、超构光栅、波长解复用器）
-- 丰富的约束和投影节点（最小特征尺寸、曲率约束、制造约束等）
-- 支持多保真度和主动学习数据生成
+**技术栈:**
+- Python 3.13
+- PyTorch 2.10.0 (CUDA 13.0)
+- NumPy, Matplotlib
+- Meep (可选，用于 FDTD 仿真)
 
 ## 目录结构
 
 ```
 HI-Photonics/
-├── core/                    # 核心计算图框架
-│   ├── node.py             # 节点基类
-│   ├── graph.py            # 计算图管理
-│   ├── nodes/              # 各类节点实现
-│   │   ├── parameterization.py   # 设计参数节点
-│   │   ├── simulation.py         # 仿真节点
-│   │   ├── objective.py          # 目标函数节点
-│   │   ├── filter.py             # 滤波器节点（高斯、Sobel、形态学等）
-│   │   ├── projection.py         # 投影节点（Sigmoid、Heaviside等）
-│   │   ├── constraint.py         # 约束节点（最小特征尺寸、曲率等）
-│   │   └── composite.py          # 组合节点（Pipeline、Merge等）
-│   └── utils/              # 工具函数
-│       ├── adjoint.py      # 伴随方法实现
-│       ├── autodiff.py     # 自动微分
-│       └── typing.py       # 类型定义
-├── challenges/             # 设计挑战定义
-│   ├── base.py             # 挑战基类（DesignChallenge, DesignSpec）
-│   ├── grating_coupler.py  # 光栅耦合器
-│   ├── metagrating.py      # 超构光栅
-│   └── wavelength_demux.py # 波长解复用器
-├── interfaces/             # 外部接口
-│   ├── simulators/         # 仿真器接口
-│   │   ├── base.py         # 仿真器基类（SimulatorInterface）
-│   │   ├── meep.py         # Meep FDTD 仿真器
-│   │   ├── lumerical.py    # Lumerical 接口
-│   │   └── rcwa.py         # RCWA 仿真器
-│   ├── foundry/            # 代工厂接口
-│   │   ├── design_rules.py # 设计规则
-│   │   └── gds.py          # GDS 文件处理
-│   └── visualization/      # 可视化
-│       ├── field.py        # 场分布可视化
-│       └── structure.py    # 结构可视化
-├── models/                 # 神经网络模型
-│   ├── inverse/            # 逆向设计模型
-│   │   ├── cgan.py         # 条件生成对抗网络
-│   │   ├── hilab.py        # HiLab 模型
-│   │   ├── mdn.py          # 混合密度网络
-│   │   ├── pinn.py         # 物理信息神经网络
-│   │   └── tnn.py          # 张量神经网络
-│   ├── surrogates/         # 代理模型
+├── core/               # 核心计算图框架
+│   ├── graph.py        # 计算图管理与拓扑排序
+│   ├── node.py         # 节点基类
+│   └── nodes/          # 各类节点实现
+│       ├── parameterization.py  # 参数化节点
+│       ├── simulation.py        # 仿真节点
+│       ├── objective.py         # 目标函数节点
+│       ├── filter.py            # 滤波器节点
+│       ├── projection.py        # 投影节点
+│       ├── constraint.py        # 约束节点
+│       └── composite.py         # 组合节点
+├── models/             # 深度学习模型
+│   ├── base.py         # 模型基类 (BaseModel, SurrogateModel, InverseModel)
+│   ├── inverse/        # 逆向设计模型
+│   │   ├── tnn.py      # Tandem Network
+│   │   ├── mdn.py      # Mixture Density Network
+│   │   ├── cgan.py     # Conditional GAN
+│   │   ├── pinn.py     # Physics-Informed Neural Network
+│   │   ├── gnn.py      # Graph Neural Network
+│   │   └── hilab.py    # HiLab 模型
+│   ├── surrogates/     # 代理模型
 │   │   ├── cnn_surrogate.py
 │   │   ├── deeponet.py
 │   │   └── pino.py
-│   ├── interpret/          # 可解释性
-│   └── training/           # 训练工具
-│       ├── callbacks.py
-│       ├── losses.py
-│       └── metrics.py
-├── optimization/           # 优化算法
-│   ├── constraints/        # 约束处理
-│   └── solvers/            # 求解器
-│       ├── gradient_based.py   # 梯度优化
-│       ├── evolutionary.py     # 进化算法
-│       └── bayesian.py         # 贝叶斯优化
-├── data/                   # 数据处理
-│   ├── generators/         # 数据生成器
-│   ├── loaders/            # 数据加载器
-│   └── preprocess/         # 预处理
-├── workflows/              # 工作流
-│   ├── pipeline.py         # 设计管道
-│   ├── dispatcher.py       # 任务调度
-│   └── templates/          # 模板
-├── tests/                  # 测试
-│   ├── test_core/
-│   └── test_interfaces/
-├── examples/               # 示例代码
-│   └── 04_meep_simulation.py
-├── environment/            # 环境配置
-│   ├── Win64/environment.yml
-│   └── Ubuntu/environment.yml
-└── docs/                   # 文档
+│   ├── interpret/      # 模型可解释性
+│   └── training/       # 训练工具
+│       ├── losses.py   # 损失函数
+│       ├── metrics.py  # 评估指标
+│       └── callbacks.py # 训练回调
+├── challenges/         # 设计挑战定义
+│   ├── base.py         # 挑战基类 (DesignChallenge)
+│   ├── grating_coupler.py    # 光栅耦合器
+│   ├── metagrating.py        # 超光栅
+│   └── wavelength_demux.py   # 波长解复用器
+├── interfaces/         # 外部接口
+│   ├── simulators/     # 仿真器接口
+│   │   ├── base.py     # 仿真器基类
+│   │   ├── meep.py     # Meep FDTD
+│   │   ├── lumerical.py # Lumerical
+│   │   └── rcwa.py     # RCWA
+│   ├── foundry/        # 代工厂接口
+│   │   ├── design_rules.py
+│   │   └── gds.py
+│   └── visualization/  # 可视化工具
+├── optimization/       # 优化算法
+│   ├── constraints/    # 约束处理
+│   └── solvers/        # 求解器
+│       ├── gradient_based.py
+│       ├── evolutionary.py
+│       └── bayesian.py
+├── data/               # 数据管理
+│   ├── generators/     # 数据生成器
+│   ├── loaders/        # 数据加载器
+│   └── preprocess/     # 数据预处理
+├── workflows/          # 工作流管理
+│   ├── pipeline.py
+│   ├── dispatcher.py
+│   └── templates/
+├── examples/           # 示例代码
+│   ├── 01_basic_design.ipynb
+│   ├── 02_mdn_vs_tnn_comparison.ipynb
+│   ├── 03_hilab_workflow.ipynb
+│   └── *.py            # 各模型示例
+├── tests/              # 测试代码
+├── docs/               # 文档
+└── environment/        # 环境配置
+    ├── Win64/
+    └── Ubuntu/
 ```
 
-## 核心架构
+## 核心概念
 
-### 计算图框架
+### 1. 计算图框架 (core/)
 
-项目采用节点式计算图架构，所有计算单元继承自 `Node` 基类：
+项目采用**计算图**架构管理设计流程：
 
 ```python
-from core.node import Node
-from core.graph import Graph
+from core import Graph, ParameterizationNode, SimulationNode, ObjectiveNode
 
-class Node(ABC):
-    def __init__(self, name: str, params: Optional[Params] = None):
-        self.name = name
-        self._inputs: List['Node'] = []
-        self._outputs: List['Node'] = []
-        self._cached_output: Optional[TensorLike] = None
-    
-    @abstractmethod
-    def forward(self, **kwargs) -> TensorLike:
-        pass
-    
-    def backward(self, grad_output: torch.Tensor):
-        pass
+# 构建计算图
+param_node = ParameterizationNode(...)
+sim_node = SimulationNode(inputs=[param_node], ...)
+obj_node = ObjectiveNode(inputs=[sim_node], ...)
+
+graph = Graph(output_nodes=[obj_node])
+outputs = graph.forward()
 ```
 
-### 典型设计流程
+**节点类型:**
+- `ParameterizationNode`: 设计参数表示
+- `SimulationNode`: 仿真计算
+- `ObjectiveNode`: 目标函数计算
+- `FilterNode`: 高斯/形态学滤波
+- `ProjectionNode`: Sigmoid/Heaviside 投影
+- `ConstraintNode`: 体积/对称性/制造约束
+
+### 2. 设计挑战 (challenges/)
+
+每个设计问题继承 `DesignChallenge` 基类：
 
 ```python
-from challenges import ChallengeFactory
-from core.nodes.parameterization import ParameterizationNode
-from core.nodes.filter import GaussianFilterNode
-from core.nodes.projection import SigmoidProjectionNode
-from core.graph import Graph
+from challenges import DesignChallenge, DesignSpec, PerformanceTarget
 
-# 1. 创建设计挑战
-challenge = ChallengeFactory.create('grating_coupler')
+class MyChallenge(DesignChallenge):
+    def setup_simulator(self) -> SimulatorInterface:
+        ...
+    
+    def compute_objective(self, result) -> torch.Tensor:
+        ...
+    
+    def get_initial_design(self) -> torch.Tensor:
+        ...
+```
 
-# 2. 构建处理管道
-param = ParameterizationNode('param', challenge.get_initial_design(), requires_grad=True)
-smooth = GaussianFilterNode('smooth', param, kernel_size=5)
-proj = SigmoidProjectionNode('proj', smooth, threshold=0.5)
+**内置挑战:**
+- `GratingCouplerChallenge`: 光栅耦合器设计
+- `MetagratingChallenge`: 超光栅设计
+- `WavelengthDemuxChallenge`: 波长解复用器设计
 
-# 3. 评估设计
-processed = proj.forward()
-objective, info = challenge.evaluate(processed)
+### 3. 模型体系 (models/)
 
-# 4. 优化循环
-optimizer = torch.optim.Adam([param.value], lr=0.01)
-for i in range(100):
-    optimizer.zero_grad()
-    design = proj.forward()
-    loss, _ = challenge.evaluate(design)
-    loss.backward()
-    optimizer.step()
+**模型基类层次:**
+```
+BaseModel (nn.Module)
+├── SurrogateModel     # 正向模型: 设计 → 性能
+├── InverseModel       # 逆向模型: 性能 → 设计
+└── GenerativeModel    # 生成模型: 条件 → 设计
+```
+
+**主要模型:**
+
+| 模型 | 用途 | 特点 |
+|------|------|------|
+| TandemNetwork (TNN) | 逆向设计 | 级联正向-逆向网络 |
+| MDN | 多解逆向设计 | 输出混合高斯分布 |
+| CGAN | 条件生成 | 支持多样性和模式覆盖 |
+| PINN | 物理约束设计 | 融入 Maxwell 方程 |
+| GNN | 结构化设计 | 处理图结构数据 |
+
+### 4. 仿真器接口 (interfaces/simulators/)
+
+```python
+from interfaces import MeepSimulator, SimulationConfig
+
+config = SimulationConfig(
+    wavelength=1.55,
+    design_region=DesignRegion(...)
+)
+simulator = MeepSimulator(config)
+result = simulator.run(design_params)
 ```
 
 ## 构建与运行
 
-### 环境安装
+### 环境配置
 
-```bash
+```powershell
 # Windows (Conda)
 conda env create -f environment/Win64/environment.yml
 conda activate HI_Photonics
@@ -164,119 +186,129 @@ conda activate HI_Photonics
 
 ### 运行测试
 
-```bash
-# 设置 matplotlib 后端（无 GUI 环境）
-set MPLBACKEND=Agg
-
-# 运行测试
+```powershell
+# 运行基础设计测试
 python -m tests.test_core.test_simple_design
+
+# 使用 pytest (推荐)
+pytest tests/ -v
 ```
 
-### 运行示例
+### 示例运行
 
-```bash
+```powershell
+# 运行 TNN 逆向设计示例
+python examples/05_tnn_inverse_design.py
+
+# 运行 MDN 逆向设计示例
+python examples/06_mdn_inverse_design.py
+
+# 运行 Meep 仿真示例 (需安装 Meep)
 python examples/04_meep_simulation.py
 ```
 
-## 开发规范
+## 开发约定
 
 ### 代码风格
 
-- 使用 Python 3.13 特性
-- 类型注解：使用 `typing` 模块和 `torch.Tensor` 类型
-- 文档字符串：使用中文，遵循 Google 风格
-- 命名约定：
-  - 类名：PascalCase（如 `GratingCouplerChallenge`）
-  - 函数/方法：snake_case（如 `compute_objective`）
-  - 私有成员：前缀下划线（如 `_inputs`）
+- 使用 Python 3.13 类型提示
+- 遵循 PEP 8 规范
+- 使用 dataclass 定义配置类
+- 抽象基类使用 `ABC` 和 `@abstractmethod`
 
-### 注册模式
+### 模型开发
 
-使用装饰器注册组件：
+新增模型应继承适当的基类：
+
+```python
+from models.base import InverseModel, ModelConfig
+
+@dataclass
+class MyModelConfig(ModelConfig):
+    hidden_dim: int = 128
+    ...
+
+class MyModel(InverseModel):
+    def __init__(self, config: MyModelConfig):
+        super().__init__(config)
+        ...
+    
+    def forward(self, performance: torch.Tensor) -> torch.Tensor:
+        ...
+```
+
+### 测试规范
+
+- 测试文件放在 `tests/` 对应子目录
+- 命名规范: `test_<module_name>.py`
+- 使用 Mock 仿真器进行单元测试
+
+### 注册机制
+
+使用工厂模式注册新组件：
 
 ```python
 # 注册挑战
-@register_challenge('my_challenge')
+from challenges import register_challenge
+
+@register_challenge("my_challenge")
 class MyChallenge(DesignChallenge):
-    pass
+    ...
 
 # 注册仿真器
-@register_simulator('my_simulator')
+from interfaces import register_simulator
+
+@register_simulator("my_simulator")
 class MySimulator(SimulatorInterface):
-    pass
-
-# 使用工厂创建
-challenge = ChallengeFactory.create('my_challenge')
-simulator = SimulatorFactory.create('my_simulator')
+    ...
 ```
 
-### 节点开发
+## 关键依赖
 
-创建自定义节点：
+| 包 | 版本 | 用途 |
+|---|------|------|
+| torch | 2.10.0+cu130 | 深度学习框架 |
+| numpy | 2.3.5 | 数值计算 |
+| matplotlib | 3.10.8 | 可视化 |
+| meep | 可选 | FDTD 仿真 |
 
-```python
-from core.node import Node
+## CI/CD
 
-class MyCustomNode(Node):
-    def __init__(self, name: str, input_node: Node, **params):
-        super().__init__(name, params)
-        self.add_input(input_node)
-    
-    def forward(self, **kwargs) -> torch.Tensor:
-        input_data = self._inputs[0].forward(**kwargs)
-        # 处理逻辑
-        return result
-```
+GitHub Actions 配置位于 `.github/workflows/run-tests.yml`：
+- 触发: push/PR 到 main/master/develop
+- Python 版本: 3.13
+- 自动运行 `tests/test_core/test_simple_design`
 
-## 可用设计挑战
+## 常见任务
 
-| 挑战名称 | 类 | 描述 |
-|---------|-----|------|
-| `grating_coupler` | `GratingCouplerChallenge` | 光纤到芯片光栅耦合器 |
-| `metagrating` | `MetagratingChallenge` | 超构光栅（偏转光束） |
-| `wavelength_demux` | `WavelengthDemuxChallenge` | 波长解复用器 |
+### 添加新的设计挑战
 
-## 仿真器支持
+1. 在 `challenges/` 创建新文件
+2. 继承 `DesignChallenge` 并实现抽象方法
+3. 在 `challenges/__init__.py` 导出
+4. 使用 `@register_challenge` 注册
 
-| 仿真器 | 状态 | 描述 |
-|--------|------|------|
-| Meep | 可选 | 开源 FDTD，需 `conda install -c conda-forge pymeep` |
-| Mock | 内置 | 模拟仿真器，用于无 Meep 环境测试 |
-| Lumerical | 规划中 | 商业 FDTD/FEM |
-| RCWA | 规划中 | 严格耦合波分析 |
+### 添加新的神经网络模型
 
-## 常用材料
+1. 在 `models/inverse/` 或 `models/surrogates/` 创建文件
+2. 继承 `BaseModel`/`InverseModel`/`SurrogateModel`
+3. 实现 `forward()` 方法
+4. 在 `models/__init__.py` 导出
+5. 添加对应损失函数到 `models/training/losses.py`
 
-```python
-from interfaces.simulators.meep import Material
+### 集成新的仿真器
 
-# 预定义材料
-si = Material(name='silicon')      # n = 3.48
-sio2 = Material(name='sio2')       # n = 1.44
-sin = Material(name='sin')         # n = 2.0
-
-# 自定义材料
-custom = Material(n=2.5)
-```
-
-## 依赖关系
-
-**核心依赖：**
-- Python 3.13
-- PyTorch 2.10+ (CUDA 13.0)
-- NumPy 2.3+
-- Matplotlib 3.10+
-
-**可选依赖：**
-- pymeep: FDTD 仿真（conda install -c conda-forge pymeep）
-- h5py: HDF5 数据加载
+1. 在 `interfaces/simulators/` 创建文件
+2. 继承 `SimulatorInterface`
+3. 使用 `@register_simulator` 注册
+4. 在 `interfaces/__init__.py` 条件导出
 
 ## 注意事项
 
-1. **Windows 兼容性**：Meep 在 Windows 上需要 WSL 或特殊配置，建议使用 Mock 仿真器进行开发测试
-2. **GPU 支持**：PyTorch 配置为 CUDA 13.0，确保显卡驱动兼容
-3. **缓存机制**：节点使用 `_cached_output` 缓存结果，优化时需调用 `clear_cache()` 或使用 `graph.forward(clear_cache=True)`
-4. **伴随方法**：仿真器实现 `compute_gradient()` 方法支持梯度计算，用于拓扑优化
+- Windows 系统使用 PowerShell 命令语法
+- Meep 仅在 Linux/macOS 可用，Windows 需使用 WSL
+- GPU 加速需要 CUDA 13.0 兼容显卡
+- 大规模仿真建议使用远程服务器
 
 ---
 
