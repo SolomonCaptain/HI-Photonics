@@ -1,0 +1,50 @@
+# HI-Photonics Conda 环境配置
+# Ubuntu 22.04 + Python 3.13 + CUDA 12.0
+#
+# 创建环境: conda env create -f environment.yml
+# 激活环境: conda activate hi_photonics
+# 删除环境: conda env remove -n hi_photonics
+
+name: hi_photonics
+channels:
+  - pytorch
+  - nvidia/label/cuda-12.0
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Python
+  - python=3.13
+  
+  # CUDA 工具链
+  - cuda-toolkit=12.0
+  
+  # PyTorch (通过 pip 安装以获取最新版本)
+  - pip
+  - pip:
+    - torch==2.10.0+cu120
+    - torchvision==0.19.0+cu120
+    - torchaudio==2.5.0+cu120
+    - --index-url https://download.pytorch.org/whl/cu120
+  
+  # 科学计算核心
+  - numpy>=2.0
+  - scipy>=1.13
+  - matplotlib>=3.8
+  - h5py>=3.10
+  - scikit-learn>=1.4
+  - pandas>=2.2
+  
+  # 开发工具
+  - jupyter
+  - jupyterlab
+  - ipython
+  - tqdm
+  
+  # 可选: Meep FDTD (需要较长编译时间)
+  - pymeep
+  
+  # 系统工具
+  - git
+  - curl
+  - wget
