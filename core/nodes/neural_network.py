@@ -962,3 +962,448 @@ def create_cgan_node_for_challenge(
         forward_model=forward_model,
         device=device
     )
+
+
+class PINNNode(Node):
+    """
+    物理信息神经网络节点
+    
+    封装 PINN 模型，支持：
+    1. 正向问题：从设计参数预测物理场
+    2. 逆向问题：从目标场分布反推设计参数
+    3. 物理约束：自动满足 PDE 约束
+    
+    使用示例:
+    ```python
+    from models.inverse.pinn import MaxwellPINN, MaxwellConfig
+    from core.nodes.neural_network import PINNNode
+    
+    # 创建 PINN
+    config = MaxwellConfig(spatial_dim=2, wavelength=1.55e-6)
+    pinn = MaxwellPINN(config)
+    
+    # 创建坐标节点
+    coords = CoordinateNode('coords', resolution=(100, 100))
+    
+    # 创建 PINN 节点
+    pinn_node = PINNNode('pinn', pinn, coords)
+    
+    # 预测场分布
+    fields = pinn_node.forward()
+    
+    # 计算 Maxwell 残差
+    residual = pinn_node.compute_residual()
+    
+    # 逆向设计
+    design = pinn_node.inverse_design(target_field)
+    ```
+    """
+    
+    def __init__(
+        self,
+        name: str,
+        pinn_model,  # PhysicsInformedNet 或 MaxwellPINN
+        coordinate_node: Optional[Node] = None,
+        design_node: Optional[Node] = None,
+        device: str = 'auto'
+    ):
+        """
+        Args:
+            name: 节点名称
+            pinn_model: PINN 模型
+            coordinate_node: 坐标节点（提供空间坐标）
+            design_node: 设计参数节点（逆向问题时使用）
+            device: 计算设备
+        """
+        super().__init__(name)
+        self.pinn = pinn_model
+        
+        # 设置设备
+        if device == 'auto':
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        else:
+            self.device = torch.device(device)
+        
+        self.pinn.to(self.device)
+        
+        # 连接输入节点
+        if coordinate_node is not None:
+            self.add_input(coordinate_node)
+        if design_node is not None:
+            self.add_input(design_node)
+        
+        # 缓存
+        self._cached_fields = None
+    
+    def forward(
+        self,
+        coordinates: Optional[Tensor] = None,
+        design_params: Optional[Tensor] = None,
+        **kwargs
+    ) -> Union[Tensor, Dict[str, Tensor]]:
+        """
+        预测物理场
+        
+        Args:
+            coordinates: 空间坐标（如果为 None 则使用输入节点）
+            design_params: 设计参数（可选）
+            
+        Returns:
+            物理场（张量或字典）
+        """
+        # 获取坐标
+        if coordinates is None:
+            if not self._inputs:
+                raise ValueError("No coordinate input provided")
+            coordinates = self._inputs[0].forward(**kwargs)
+        
+        coordinates = coordinates.to(self.device)
+        
+        # 获取设计参数
+        if design_params is None and len(self._inputs) > 1:
+            design_params = self._inputs[1].forward(**kwargs)
+        
+        if design_params is not None:
+            design_params = design_params.to(self.device)
+        
+        # 预测场
+        fields = self.pinn(coordinates, design_params)
+        
+        self._cached_fields = fields
+        return fields
+    
+    def compute_residual(
+        self,
+        coordinates: Optional[Tensor] = None,
+        **kwargs
+    ) -> Dict[str, Tensor]:
+        """
+        计算 PDE 残差
+        
+        Args:
+            coordinates: 空间坐标
+            
+        Returns:
+            残差字典
+        """
+        if coordinates is None:
+            if not self._inputs:
+                raise ValueError("No coordinate input provided")
+            coordinates = self._inputs[0].forward(**kwargs)
+        
+        coordinates = coordinates.to(self.device)
+        
+        # 如果是 MaxwellPINN，使用专用方法
+        if hasattr(self.pinn, 'compute_maxwell_residual'):
+            return self.pinn.compute_maxwell_residual(coordinates)
+        
+        # 否则计算通用 PDE 残差
+        return self._compute_generic_residual(coordinates)
+    
+    def _compute_generic_residual(
+        self,
+        coordinates: Tensor
+    ) -> Dict[str, Tensor]:
+        """计算通用 PDE 残差"""
+        coordinates = coordinates.requires_grad_(True)
+        
+        # 预测场
+        fields = self.pinn(coordinates)
+        
+        # 计算拉普拉斯（示例：Helmholtz 方程）
+        if hasattr(self.pinn, 'compute_laplacian'):
+            laplacian = self.pinn.compute_laplacian(coordinates, None, 0)
+            k2 = (2 * 3.14159 / 1.55e-6) ** 2
+            residual = laplacian + k2 * fields[:, 0]
+        else:
+            residual = torch.zeros_like(fields[:, 0])
+        
+        return {
+            'residual': residual,
+            'fields': fields
+        }
+    
+    def compute_physics_loss(
+        self,
+        coordinates: Optional[Tensor] = None,
+        **kwargs
+    ) -> Tensor:
+        """
+        计算物理约束损失
+        
+        Args:
+            coordinates: 空间坐标
+            
+        Returns:
+            物理损失
+        """
+        residual_dict = self.compute_residual(coordinates, **kwargs)
+        
+        total_loss = torch.tensor(0.0, device=self.device)
+        
+        for key, value in residual_dict.items():
+            if 'residual' in key.lower():
+                total_loss = total_loss + (value ** 2).mean()
+        
+        return total_loss
+    
+    def inverse_design(
+        self,
+        target_field: Tensor,
+        coordinates: Tensor,
+        n_iterations: int = 1000,
+        lr: float = 0.01
+    ) -> Tensor:
+        """
+        逆向设计：从目标场分布反推设计参数
+        
+        Args:
+            target_field: 目标场分布
+            coordinates: 空间坐标
+            n_iterations: 优化迭代次数
+            lr: 学习率
+            
+        Returns:
+            优化后的设计参数
+        """
+        # 初始化设计参数
+        design_params = torch.rand(
+            1, self.pinn.design_dim,
+            device=self.device, requires_grad=True
+        )
+        
+        optimizer = torch.optim.Adam([design_params], lr=lr)
+        
+        target_field = target_field.to(self.device)
+        coordinates = coordinates.to(self.device)
+        
+        for i in range(n_iterations):
+            optimizer.zero_grad()
+            
+            # 预测场
+            pred_field = self.pinn(coordinates, design_params)
+            
+            # 计算损失
+            loss = F.mse_loss(pred_field, target_field)
+            
+            # 反向传播
+            loss.backward()
+            optimizer.step()
+            
+            # 限制设计参数范围
+            with torch.no_grad():
+                design_params.clamp_(0, 1)
+        
+        return design_params.detach()
+    
+    def train_pinn(
+        self,
+        collocation_points: Tensor,
+        boundary_points: Optional[Tensor] = None,
+        labeled_data: Optional[Dict[str, Tensor]] = None,
+        n_iterations: int = 10000,
+        log_interval: int = 100
+    ) -> Dict[str, List[float]]:
+        """
+        训练 PINN
+        
+        Args:
+            collocation_points: 配点
+            boundary_points: 边界点
+            labeled_data: 标签数据
+            n_iterations: 迭代次数
+            log_interval: 日志间隔
+            
+        Returns:
+            训练历史
+        """
+        from models.inverse.pinn import PINNSolver
+        
+        solver = PINNSolver(self.pinn)
+        
+        history = solver.train(
+            n_iterations=n_iterations,
+            collocation_points=collocation_points.to(self.device),
+            boundary_points=boundary_points.to(self.device) if boundary_points else None,
+            labeled_data={k: v.to(self.device) for k, v in labeled_data.items()} if labeled_data else None,
+            log_interval=log_interval
+        )
+        
+        return history
+    
+    def get_field_gradient(
+        self,
+        coordinates: Tensor,
+        component: int = 0
+    ) -> Tensor:
+        """
+        计算场的梯度
+        
+        Args:
+            coordinates: 空间坐标
+            component: 场分量索引
+            
+        Returns:
+            场梯度
+        """
+        coordinates = coordinates.to(self.device).requires_grad_(True)
+        
+        fields = self.pinn(coordinates)
+        
+        grad = torch.autograd.grad(
+            fields[:, component].sum(),
+            coordinates,
+            create_graph=True
+        )[0]
+        
+        return grad
+    
+    def load_pretrained(self, path: Union[str, Path]):
+        """加载预训练模型"""
+        checkpoint = torch.load(path, map_location=self.device)
+        if 'model_state' in checkpoint:
+            self.pinn.load_state_dict(checkpoint['model_state'])
+        else:
+            self.pinn.load_state_dict(checkpoint)
+    
+    def save_model(self, path: Union[str, Path]):
+        """保存模型"""
+        torch.save(self.pinn.state_dict(), path)
+
+
+def create_pinn_node_for_photonics(
+    spatial_dim: int = 2,
+    field_components: int = 3,
+    wavelength: float = 1.55e-6,
+    epsilon_r: float = 12.0,
+    coordinate_node: Optional[Node] = None,
+    pretrained_path: Optional[str] = None,
+    device: str = 'auto'
+) -> PINNNode:
+    """
+    为光子学问题创建 PINN 节点
+    
+    Args:
+        spatial_dim: 空间维度
+        field_components: 场分量数
+        wavelength: 工作波长
+        epsilon_r: 相对介电常数
+        coordinate_node: 坐标节点
+        pretrained_path: 预训练模型路径
+        device: 计算设备
+        
+    Returns:
+        配置好的 PINNNode
+    """
+    from models.inverse.pinn import create_pinn_for_photonics
+    
+    pinn = create_pinn_for_photonics(
+        spatial_dim=spatial_dim,
+        field_components=field_components,
+        wavelength=wavelength,
+        epsilon_r=epsilon_r,
+        device=device
+    )
+    
+    if pretrained_path:
+        pinn.load_state_dict(torch.load(pretrained_path, map_location=device))
+    
+    return PINNNode(
+        name='pinn_photonics',
+        pinn_model=pinn,
+        coordinate_node=coordinate_node,
+        device=device
+    )
+
+
+class CoordinateNode(Node):
+    """
+    坐标节点
+    
+    生成空间坐标网格，用于 PINN 输入。
+    """
+    
+    def __init__(
+        self,
+        name: str,
+        bounds: Optional[List[Tuple[float, float]]] = None,
+        resolution: Optional[Tuple[int, ...]] = None,
+        device: str = 'auto'
+    ):
+        """
+        Args:
+            name: 节点名称
+            bounds: 各维度的边界 [(min, max), ...]
+            resolution: 各维度的分辨率
+            device: 计算设备
+        """
+        super().__init__(name)
+        
+        self.bounds = bounds or [(-1, 1), (-1, 1)]
+        self.resolution = resolution or (100, 100)
+        
+        if device == 'auto':
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        else:
+            self.device = torch.device(device)
+        
+        # 预生成坐标网格
+        self._generate_grid()
+    
+    def _generate_grid(self):
+        """生成坐标网格"""
+        grids = []
+        for i, (bound, res) in enumerate(zip(self.bounds, self.resolution)):
+            grid = torch.linspace(bound[0], bound[1], res, device=self.device)
+            grids.append(grid)
+        
+        # 创建网格
+        mesh = torch.meshgrid(*grids, indexing='ij')
+        
+        # 展平为坐标点
+        self._coords = torch.stack([m.flatten() for m in mesh], dim=-1)
+        
+        # 保存网格形状
+        self._grid_shape = self.resolution
+    
+    def forward(self, **kwargs) -> Tensor:
+        """
+        获取坐标
+        
+        Returns:
+            坐标张量 [N, spatial_dim]
+        """
+        return self._coords
+    
+    def get_grid(self) -> Tensor:
+        """获取网格形式的坐标"""
+        return self._coords.view(*self._grid_shape, -1)
+    
+    def sample_random(self, n_points: int) -> Tensor:
+        """随机采样坐标点"""
+        coords = torch.zeros(n_points, len(self.bounds), device=self.device)
+        
+        for i, (bound, _) in enumerate(zip(self.bounds, self.resolution)):
+            coords[:, i] = torch.rand(n_points, device=self.device) * (bound[1] - bound[0]) + bound[0]
+        
+        return coords
+    
+    def sample_boundary(self, n_points_per_side: int = 50) -> Tensor:
+        """采样边界点"""
+        boundary_points = []
+        
+        for dim, (bound, _) in enumerate(zip(self.bounds, self.resolution)):
+            for boundary_val in bound:
+                points = torch.rand(n_points_per_side, len(self.bounds), device=self.device)
+                points[:, dim] = boundary_val
+                
+                # 设置其他维度的范围
+                for other_dim, other_bound in enumerate(self.bounds):
+                    if other_dim != dim:
+                        points[:, other_dim] = (
+                            points[:, other_dim] * (other_bound[1] - other_bound[0]) + other_bound[0]
+                        )
+                
+                boundary_points.append(points)
+        
+        return torch.cat(boundary_points, dim=0)

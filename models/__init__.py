@@ -42,6 +42,20 @@ from models.inverse.cgan import (
     create_cgan_for_challenge
 )
 
+from models.inverse.pinn import (
+    PhysicsInformedNet,
+    SirenNet,
+    MaxwellPINN,
+    PhotonicsPINN,
+    PINNSolver,
+    PINNConfig,
+    MaxwellConfig,
+    PhysicsLossConfig,
+    FourierFeatures,
+    Sine,
+    create_pinn_for_photonics
+)
+
 from models.training.losses import (
     BaseLoss,
     PerformanceLoss,
@@ -55,6 +69,11 @@ from models.training.losses import (
     GradientPenaltyLoss,
     ConditionalConsistencyLoss,
     CGANCombinedLoss,
+    PDEResidualLoss,
+    HelmholtzLoss,
+    MaxwellLoss,
+    BoundaryConditionLoss,
+    PINNCombinedLoss,
     get_loss
 )
 
@@ -120,6 +139,19 @@ __all__ = [
     'WGAN_GP',
     'create_cgan_for_challenge',
     
+    # PINN
+    'PhysicsInformedNet',
+    'SirenNet',
+    'MaxwellPINN',
+    'PhotonicsPINN',
+    'PINNSolver',
+    'PINNConfig',
+    'MaxwellConfig',
+    'PhysicsLossConfig',
+    'FourierFeatures',
+    'Sine',
+    'create_pinn_for_photonics',
+    
     # Losses
     'BaseLoss',
     'PerformanceLoss',
@@ -133,6 +165,11 @@ __all__ = [
     'GradientPenaltyLoss',
     'ConditionalConsistencyLoss',
     'CGANCombinedLoss',
+    'PDEResidualLoss',
+    'HelmholtzLoss',
+    'MaxwellLoss',
+    'BoundaryConditionLoss',
+    'PINNCombinedLoss',
     'get_loss',
     
     # Metrics

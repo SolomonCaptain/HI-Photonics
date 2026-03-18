@@ -785,6 +785,373 @@ class CGANCombinedLoss(nn.Module):
         return self.gp_loss(discriminator, real_designs, fake_designs, conditions)
 
 
+class PDEResidualLoss(BaseLoss):
+    """
+    PDE 残差损失
+    
+    计算偏微分方程残差，用于 PINN 训练。
+    支持多种常用 PDE。
+    """
+    
+    def __init__(
+        self,
+        pde_type: str = 'helmholtz',
+        reduction: str = 'mean'
+    ):
+        """
+        Args:
+            pde_type: PDE 类型 ('helmholtz', 'laplace', 'heat', 'wave')
+            reduction: 归约方式
+        """
+        super().__init__(reduction)
+        self.pde_type = pde_type
+    
+    def forward(
+        self,
+        residual: Tensor,
+        **kwargs
+    ) -> Tensor:
+        """
+        计算 PDE 残差损失
+        
+        Args:
+            residual: PDE 残差
+            **kwargs: 额外参数
+            
+        Returns:
+            残差损失
+        """
+        return self._reduce(residual ** 2)
+
+
+class HelmholtzLoss(nn.Module):
+    """
+    Helmholtz 方程损失
+    
+    (∇² + k²)u = f
+    
+    用于电磁波和谐振腔问题。
+    """
+    
+    def __init__(
+        self,
+        k: float = 1.0,
+        weight: float = 1.0
+    ):
+        """
+        Args:
+            k: 波数
+            weight: 损失权重
+        """
+        super().__init__()
+        self.k = k
+        self.weight = weight
+    
+    def forward(
+        self,
+        u: Tensor,
+        laplacian: Tensor,
+        f: Optional[Tensor] = None
+    ) -> Tensor:
+        """
+        计算 Helmholtz 残差
+        
+        Args:
+            u: 场值
+            laplacian: 场的拉普拉斯
+            f: 源项（可选）
+            
+        Returns:
+            Helmholtz 残差损失
+        """
+        k2 = self.k ** 2
+        
+        if f is None:
+            residual = laplacian + k2 * u
+        else:
+            residual = laplacian + k2 * u - f
+        
+        return self.weight * (residual ** 2).mean()
+
+
+class MaxwellLoss(nn.Module):
+    """
+    Maxwell 方程损失
+    
+    频域 Maxwell 方程:
+    ∇ × E = -jωμH
+    ∇ × H = jωεE + J
+    
+    用于电磁场问题。
+    """
+    
+    def __init__(
+        self,
+        omega: float = 1.0,
+        epsilon: float = 1.0,
+        mu: float = 1.0,
+        weight: float = 1.0
+    ):
+        """
+        Args:
+            omega: 角频率
+            epsilon: 介电常数
+            mu: 磁导率
+            weight: 损失权重
+        """
+        super().__init__()
+        self.omega = omega
+        self.epsilon = epsilon
+        self.mu = mu
+        self.weight = weight
+    
+    def forward(
+        self,
+        curl_E: Tensor,
+        curl_H: Tensor,
+        E: Tensor,
+        H: Tensor,
+        J: Optional[Tensor] = None
+    ) -> Dict[str, Tensor]:
+        """
+        计算 Maxwell 方程残差
+        
+        Args:
+            curl_E: E 的旋度
+            curl_H: H 的旋度
+            E: 电场
+            H: 磁场
+            J: 电流密度（可选）
+            
+        Returns:
+            残差字典
+        """
+        # ∇ × E + jωμH = 0
+        residual_E = curl_E + 1j * self.omega * self.mu * H
+        
+        # ∇ × H - jωεE = J
+        if J is None:
+            residual_H = curl_H - 1j * self.omega * self.epsilon * E
+        else:
+            residual_H = curl_H - 1j * self.omega * self.epsilon * E - J
+        
+        loss_E = (residual_E.abs() ** 2).mean()
+        loss_H = (residual_H.abs() ** 2).mean()
+        
+        total_loss = self.weight * (loss_E + loss_H)
+        
+        return {
+            'maxwell_E': loss_E,
+            'maxwell_H': loss_H,
+            'total': total_loss
+        }
+
+
+class BoundaryConditionLoss(BaseLoss):
+    """
+    边界条件损失
+    
+    支持多种边界条件:
+    - Dirichlet: u = g
+    - Neumann: ∂u/∂n = g
+    - Robin: αu + β∂u/∂n = g
+    - PML: 吸收边界条件
+    """
+    
+    def __init__(
+        self,
+        bc_type: str = 'dirichlet',
+        weight: float = 1.0,
+        reduction: str = 'mean'
+    ):
+        """
+        Args:
+            bc_type: 边界条件类型
+            weight: 损失权重
+            reduction: 归约方式
+        """
+        super().__init__(reduction)
+        self.bc_type = bc_type.lower()
+        self.weight = weight
+    
+    def forward(
+        self,
+        pred: Tensor,
+        target: Tensor,
+        normal_grad: Optional[Tensor] = None
+    ) -> Tensor:
+        """
+        计算边界条件损失
+        
+        Args:
+            pred: 预测值
+            target: 目标值
+            normal_grad: 法向梯度（Neumann/Robin 需要）
+            
+        Returns:
+            边界条件损失
+        """
+        if self.bc_type == 'dirichlet':
+            loss = (pred - target) ** 2
+        
+        elif self.bc_type == 'neumann':
+            if normal_grad is None:
+                raise ValueError("normal_grad required for Neumann BC")
+            loss = (normal_grad - target) ** 2
+        
+        elif self.bc_type == 'robin':
+            if normal_grad is None:
+                raise ValueError("normal_grad required for Robin BC")
+            # αu + β∂u/∂n = g
+            # 假设 target 是 (alpha, beta, g) 的元组
+            alpha, beta, g = target
+            loss = (alpha * pred + beta * normal_grad - g) ** 2
+        
+        else:
+            raise ValueError(f"Unknown BC type: {self.bc_type}")
+        
+        return self.weight * self._reduce(loss)
+
+
+class PINNCombinedLoss(nn.Module):
+    """
+    PINN 组合损失
+    
+    组合 PDE 残差损失、边界条件损失和数据损失。
+    支持自适应权重调整。
+    """
+    
+    def __init__(
+        self,
+        physics_weight: float = 1.0,
+        bc_weight: float = 1.0,
+        data_weight: float = 1.0,
+        adaptive_weights: bool = False,
+        update_freq: int = 100
+    ):
+        """
+        Args:
+            physics_weight: 物理损失权重
+            bc_weight: 边界条件权重
+            data_weight: 数据损失权重
+            adaptive_weights: 是否使用自适应权重
+            update_freq: 权重更新频率
+        """
+        super().__init__()
+        self.physics_weight = physics_weight
+        self.bc_weight = bc_weight
+        self.data_weight = data_weight
+        self.adaptive_weights = adaptive_weights
+        self.update_freq = update_freq
+        
+        # 初始化可学习权重
+        if adaptive_weights:
+            self.log_weights = nn.ParameterDict({
+                'physics': nn.Parameter(torch.tensor(0.0)),
+                'bc': nn.Parameter(torch.tensor(0.0)),
+                'data': nn.Parameter(torch.tensor(0.0))
+            })
+        
+        # 损失函数
+        self.pde_loss = PDEResidualLoss()
+        self.bc_loss = BoundaryConditionLoss()
+    
+    def forward(
+        self,
+        physics_residual: Optional[Tensor] = None,
+        bc_pred: Optional[Tensor] = None,
+        bc_target: Optional[Tensor] = None,
+        data_pred: Optional[Tensor] = None,
+        data_target: Optional[Tensor] = None
+    ) -> Dict[str, Tensor]:
+        """
+        计算组合损失
+        
+        Args:
+            physics_residual: PDE 残差
+            bc_pred: 边界预测值
+            bc_target: 边界目标值
+            data_pred: 数据预测值
+            data_target: 数据目标值
+            
+        Returns:
+            损失字典
+        """
+        losses = {}
+        total = torch.tensor(0.0)
+        
+        # 物理损失
+        if physics_residual is not None:
+            weight = self._get_weight('physics')
+            losses['physics'] = self.pde_loss(physics_residual)
+            total = total + weight * losses['physics']
+        
+        # 边界条件损失
+        if bc_pred is not None and bc_target is not None:
+            weight = self._get_weight('bc')
+            losses['bc'] = self.bc_loss(bc_pred, bc_target)
+            total = total + weight * losses['bc']
+        
+        # 数据损失
+        if data_pred is not None and data_target is not None:
+            weight = self._get_weight('data')
+            losses['data'] = F.mse_loss(data_pred, data_target)
+            total = total + weight * losses['data']
+        
+        losses['total'] = total
+        
+        return losses
+    
+    def _get_weight(self, key: str) -> Tensor:
+        """获取损失权重"""
+        if self.adaptive_weights:
+            # λ = exp(-log_weight)
+            return torch.exp(-self.log_weights[key])
+        else:
+            weights = {
+                'physics': self.physics_weight,
+                'bc': self.bc_weight,
+                'data': self.data_weight
+            }
+            return torch.tensor(weights.get(key, 1.0))
+    
+    def update_weights_adaptive(
+        self,
+        losses: Dict[str, Tensor],
+        model: nn.Module
+    ):
+        """
+        自适应更新权重
+        
+        基于梯度平衡策略更新损失权重。
+        """
+        if not self.adaptive_weights:
+            return
+        
+        grad_norms = {}
+        
+        for key, loss in losses.items():
+            if key == 'total':
+                continue
+            
+            # 计算梯度范数
+            grad = torch.autograd.grad(
+                loss, model.parameters(),
+                retain_graph=True,
+                create_graph=False
+            )
+            grad_norm = torch.norm(torch.cat([g.flatten() for g in grad if g is not None]))
+            grad_norms[key] = grad_norm
+        
+        # 更新权重
+        total_grad_norm = sum(grad_norms.values())
+        for key in grad_norms:
+            # λ_i = ||∇L_i|| / Σ_j ||∇L_j||
+            new_weight = grad_norms[key] / (total_grad_norm + 1e-8)
+            # 更新 log 权重
+            self.log_weights[key].data = -torch.log(new_weight + 1e-8)
+
+
 # 损失函数工厂
 LOSS_REGISTRY = {
     'mse': nn.MSELoss,
@@ -801,7 +1168,12 @@ LOSS_REGISTRY = {
     'gan': GANLoss,
     'gradient_penalty': GradientPenaltyLoss,
     'conditional_consistency': ConditionalConsistencyLoss,
-    'cgan_combined': CGANCombinedLoss
+    'cgan_combined': CGANCombinedLoss,
+    'pde_residual': PDEResidualLoss,
+    'helmholtz': HelmholtzLoss,
+    'maxwell': MaxwellLoss,
+    'boundary_condition': BoundaryConditionLoss,
+    'pinn_combined': PINNCombinedLoss
 }
 
 
