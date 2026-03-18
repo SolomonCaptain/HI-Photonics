@@ -1152,6 +1152,571 @@ class PINNCombinedLoss(nn.Module):
             self.log_weights[key].data = -torch.log(new_weight + 1e-8)
 
 
+# ============================================================================
+# VAE 专用损失函数
+# ============================================================================
+
+class VAEReconstructionLoss(BaseLoss):
+    """
+    VAE 重建损失
+
+    支持多种重建损失类型:
+    - MSE (均方误差)
+    - BCE (二元交叉熵)
+    - L1 (平均绝对误差)
+    - Focal (焦点损失，用于不平衡数据)
+
+    适用于光子学设计参数的重建任务。
+    """
+
+    def __init__(
+        self,
+        loss_type: str = 'mse',
+        reduction: str = 'mean',
+        focal_gamma: float = 2.0
+    ):
+        """
+        Args:
+            loss_type: 损失类型 ('mse', 'bce', 'l1', 'focal')
+            reduction: 归约方式
+            focal_gamma: 焦点损失的 gamma 参数
+        """
+        super().__init__(reduction)
+        self.loss_type = loss_type
+        self.focal_gamma = focal_gamma
+
+    def forward(
+        self,
+        recon_x: Tensor,
+        x: Tensor
+    ) -> Tensor:
+        """
+        计算重建损失
+
+        Args:
+            recon_x: 重建的设计参数 [B, H, W] 或 [B, C, H, W]
+            x: 原始设计参数
+
+        Returns:
+            重建损失
+        """
+        if self.loss_type == 'mse':
+            loss = (recon_x - x) ** 2
+        elif self.loss_type == 'bce':
+            # 数值稳定性
+            recon_x = torch.clamp(recon_x, min=1e-7, max=1 - 1e-7)
+            loss = -(x * torch.log(recon_x) + (1 - x) * torch.log(1 - recon_x))
+        elif self.loss_type == 'l1':
+            loss = torch.abs(recon_x - x)
+        elif self.loss_type == 'focal':
+            # Focal Loss for imbalanced reconstruction
+            bce = F.binary_cross_entropy(recon_x, x, reduction='none')
+            pt = torch.exp(-bce)
+            loss = (1 - pt) ** self.focal_gamma * bce
+        else:
+            raise ValueError(f"Unknown loss type: {self.loss_type}")
+
+        return self._reduce(loss)
+
+
+class KLDivergenceLoss(BaseLoss):
+    """
+    KL 散度损失
+
+    计算 q(z|x) 和 p(z) 之间的 KL 散度:
+    KL(q(z|x) || p(z)) = -0.5 * Σ(1 + log(σ²) - μ² - σ²)
+
+    其中 p(z) 是标准正态分布 N(0, I)。
+
+    支持:
+    - 标准 KL 散度
+    - 闭环 KL 散度（更稳定）
+    - KL 退火（Cyclical Annealing）
+    """
+
+    def __init__(
+        self,
+        reduction: str = 'mean',
+        closed_form: bool = True,
+        unit_variance: bool = True
+    ):
+        """
+        Args:
+            reduction: 归约方式
+            closed_form: 是否使用闭环形式（更稳定）
+            unit_variance: 先验是否为单位方差
+        """
+        super().__init__(reduction)
+        self.closed_form = closed_form
+        self.unit_variance = unit_variance
+
+    def forward(
+        self,
+        mu: Tensor,
+        logvar: Tensor
+    ) -> Tensor:
+        """
+        计算 KL 散度
+
+        Args:
+            mu: 潜在空间均值 [B, latent_dim]
+            logvar: 潜在空间对数方差 [B, latent_dim]
+
+        Returns:
+            KL 散度
+        """
+        if self.closed_form:
+            # 闭环形式，数值更稳定
+            # KL = -0.5 * Σ(1 + log(σ²) - μ² - σ²)
+            kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)
+        else:
+            # 使用重参数化采样估计
+            std = torch.exp(0.5 * logvar)
+            z = mu + std * torch.randn_like(std)
+
+            # 计算对数概率比
+            log_pz = -0.5 * (z ** 2).sum(dim=-1)  # N(0, I)
+            log_qz = -0.5 * (((z - mu) / std) ** 2 + logvar).sum(dim=-1)  # N(mu, σ²)
+
+            kl = log_qz - log_pz
+
+        return self._reduce(kl)
+
+
+class BetaVAELoss(nn.Module):
+    """
+    β-VAE 损失函数
+
+    通过调整 β 参数控制潜在空间的解耦程度:
+    L = L_recon + β * L_KL
+
+    β > 1: 鼓励解耦的潜在表示
+    β = 1: 标准 VAE
+    β < 1: 更好的重建质量
+
+    支持:
+    - 固定 β
+    - 线性预热
+    - 周期性退火
+    """
+
+    def __init__(
+        self,
+        beta: float = 1.0,
+        recon_type: str = 'mse',
+        warmup_epochs: int = 0,
+        cyclical_annealing: bool = False,
+        cyclical_period: int = 10,
+        reduction: str = 'mean'
+    ):
+        """
+        Args:
+            beta: KL 损失权重
+            recon_type: 重建损失类型
+            warmup_epochs: β 预热的 epoch 数
+            cyclical_annealing: 是否使用周期性退火
+            cyclical_period: 周期性退火的周期
+            reduction: 归约方式
+        """
+        super().__init__()
+        self.beta = beta
+        self.warmup_epochs = warmup_epochs
+        self.cyclical_annealing = cyclical_annealing
+        self.cyclical_period = cyclical_period
+
+        self.recon_loss = VAEReconstructionLoss(recon_type, reduction)
+        self.kl_loss = KLDivergenceLoss(reduction)
+
+        self.current_epoch = 0
+
+    def forward(
+        self,
+        x: Tensor,
+        recon_x: Tensor,
+        mu: Tensor,
+        logvar: Tensor
+    ) -> Dict[str, Tensor]:
+        """
+        计算 β-VAE 损失
+
+        Args:
+            x: 原始输入
+            recon_x: 重建输入
+            mu: 潜在均值
+            logvar: 潜在对数方差
+
+        Returns:
+            损失字典
+        """
+        # 重建损失
+        recon = self.recon_loss(recon_x, x)
+
+        # KL 散度
+        kl = self.kl_loss(mu, logvar)
+
+        # 获取当前 β
+        current_beta = self.get_beta()
+
+        # 总损失
+        total = recon + current_beta * kl
+
+        return {
+            'recon': recon,
+            'kl': kl,
+            'beta': torch.tensor(current_beta),
+            'total': total
+        }
+
+    def get_beta(self) -> float:
+        """获取当前的 β 值"""
+        if self.cyclical_annealing:
+            # 周期性退火
+            cycle = self.current_epoch % self.cyclical_period
+            return self.beta * min(1.0, cycle / (self.cyclical_period / 2))
+        elif self.current_epoch < self.warmup_epochs:
+            # 线性预热
+            return self.beta * (self.current_epoch + 1) / self.warmup_epochs
+        return self.beta
+
+    def step(self):
+        """推进一个 epoch"""
+        self.current_epoch += 1
+
+
+class VAELatentRegularization(nn.Module):
+    """
+    VAE 潜在空间正则化
+
+    对潜在空间施加额外约束:
+    1. 容量约束 (Capacity Constraint): 限制信息瓶颈
+    2. MMD 约束 (Maximum Mean Discrepancy): 匹配先验分布
+    3. 对抗约束 (Adversarial): 对抗性正则化
+    """
+
+    def __init__(
+        self,
+        reg_type: str = 'capacity',
+        capacity_start: float = 0.0,
+        capacity_end: float = 25.0,
+        capacity_epochs: int = 100,
+        mmd_kernel: str = 'rbf',
+        mmd_bandwidth: float = 1.0
+    ):
+        """
+        Args:
+            reg_type: 正则化类型 ('capacity', 'mmd', 'adversarial')
+            capacity_start: 容量约束起始值
+            capacity_end: 容量约束结束值
+            capacity_epochs: 容量增长的 epoch 数
+            mmd_kernel: MMD 核函数类型
+            mmd_bandwidth: MMD 核带宽
+        """
+        super().__init__()
+        self.reg_type = reg_type
+        self.capacity_start = capacity_start
+        self.capacity_end = capacity_end
+        self.capacity_epochs = capacity_epochs
+        self.mmd_kernel = mmd_kernel
+        self.mmd_bandwidth = mmd_bandwidth
+
+        self.current_epoch = 0
+
+    def forward(
+        self,
+        z: Tensor,
+        mu: Tensor,
+        logvar: Tensor
+    ) -> Tensor:
+        """
+        计算正则化损失
+
+        Args:
+            z: 潜在向量 [B, latent_dim]
+            mu: 潜在均值
+            logvar: 潜在对数方差
+
+        Returns:
+            正则化损失
+        """
+        if self.reg_type == 'capacity':
+            return self._capacity_loss(mu, logvar)
+        elif self.reg_type == 'mmd':
+            return self._mmd_loss(z)
+        elif self.reg_type == 'adversarial':
+            return self._adversarial_loss(mu)
+        else:
+            raise ValueError(f"Unknown regularization type: {self.reg_type}")
+
+    def _capacity_loss(self, mu: Tensor, logvar: Tensor) -> Tensor:
+        """
+        容量约束损失
+
+        KL 项的权重会随着容量 C(t) 变化:
+        L_KL' = |KL(q(z|x) || p(z)) - C(t)|
+
+        这鼓励模型逐渐增加潜在空间的使用。
+        """
+        # 计算 KL 散度
+        kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)
+
+        # 计算当前容量
+        if self.current_epoch < self.capacity_epochs:
+            capacity = self.capacity_start + \
+                       (self.capacity_end - self.capacity_start) * \
+                       self.current_epoch / self.capacity_epochs
+        else:
+            capacity = self.capacity_end
+
+        # 容量约束损失
+        loss = torch.abs(kl.mean() - capacity)
+
+        return loss
+
+    def _mmd_loss(self, z: Tensor) -> Tensor:
+        """
+        MMD (Maximum Mean Discrepancy) 损失
+
+        计算潜在分布与先验分布之间的 MMD。
+        比 KL 散度更平滑，适用于复杂分布。
+        """
+        batch_size = z.size(0)
+
+        # 从先验采样
+        z_prior = torch.randn_like(z)
+
+        # 计算核矩阵
+        if self.mmd_kernel == 'rbf':
+            K_zz = self._rbf_kernel(z, z)
+            K_pp = self._rbf_kernel(z_prior, z_prior)
+            K_zp = self._rbf_kernel(z, z_prior)
+        else:
+            raise ValueError(f"Unknown kernel: {self.mmd_kernel}")
+
+        # MMD 估计
+        mmd = K_zz.mean() + K_pp.mean() - 2 * K_zp.mean()
+
+        return mmd
+
+    def _rbf_kernel(self, x: Tensor, y: Tensor) -> Tensor:
+        """计算 RBF 核矩阵"""
+        xx = (x ** 2).sum(dim=-1, keepdim=True)
+        yy = (y ** 2).sum(dim=-1, keepdim=True)
+        dist = xx + yy.T - 2 * x @ y.T
+
+        return torch.exp(-dist / (2 * self.mmd_bandwidth ** 2))
+
+    def _adversarial_loss(self, mu: Tensor) -> Tensor:
+        """
+        对抗性正则化损失
+
+        鼓励潜在分布与先验分布难以区分。
+        （需要配合判别器网络使用）
+        """
+        # 简化版本：直接鼓励均值接近 0
+        return mu.pow(2).mean()
+
+    def step(self):
+        """推进一个 epoch"""
+        self.current_epoch += 1
+
+
+class VAETotalLoss(nn.Module):
+    """
+    VAE 组合损失函数
+
+    组合多种损失用于 VAE 训练:
+    1. 重建损失
+    2. KL 散度
+    3. 潜在空间正则化
+    4. 感知损失（可选）
+
+    支持自适应权重调整和多种训练策略。
+    """
+
+    def __init__(
+        self,
+        recon_type: str = 'mse',
+        beta: float = 1.0,
+        warmup_epochs: int = 0,
+        reg_type: Optional[str] = None,
+        reg_weight: float = 0.1,
+        perceptual_weight: float = 0.0,
+        adaptive_weights: bool = False
+    ):
+        """
+        Args:
+            recon_type: 重建损失类型
+            beta: KL 损失权重
+            warmup_epochs: β 预热 epoch 数
+            reg_type: 正则化类型（None 表示不使用）
+            reg_weight: 正则化权重
+            perceptual_weight: 感知损失权重
+            adaptive_weights: 是否使用自适应权重
+        """
+        super().__init__()
+
+        self.beta = beta
+        self.warmup_epochs = warmup_epochs
+        self.reg_weight = reg_weight
+        self.perceptual_weight = perceptual_weight
+        self.adaptive_weights = adaptive_weights
+
+        # 损失组件
+        self.recon_loss = VAEReconstructionLoss(recon_type)
+        self.kl_loss = KLDivergenceLoss()
+        self.reg_loss = VAELatentRegularization(reg_type) if reg_type else None
+
+        # 自适应权重
+        if adaptive_weights:
+            self.log_weights = nn.ParameterDict({
+                'recon': nn.Parameter(torch.tensor(0.0)),
+                'kl': nn.Parameter(torch.tensor(0.0))
+            })
+
+        self.current_epoch = 0
+
+    def forward(
+        self,
+        x: Tensor,
+        recon_x: Tensor,
+        mu: Tensor,
+        logvar: Tensor,
+        z: Optional[Tensor] = None
+    ) -> Dict[str, Tensor]:
+        """
+        计算组合损失
+
+        Args:
+            x: 原始输入
+            recon_x: 重建输入
+            mu: 潜在均值
+            logvar: 潜在对数方差
+            z: 潜在向量（可选，用于某些正则化）
+
+        Returns:
+            损失字典
+        """
+        losses = {}
+
+        # 重建损失
+        losses['recon'] = self.recon_loss(recon_x, x)
+
+        # KL 散度
+        losses['kl'] = self.kl_loss(mu, logvar)
+
+        # 获取权重
+        if self.adaptive_weights:
+            w_recon = torch.exp(-self.log_weights['recon'])
+            w_kl = torch.exp(-self.log_weights['kl'])
+        else:
+            w_recon = 1.0
+            current_beta = self._get_beta()
+            w_kl = current_beta
+
+        # 总损失
+        total = w_recon * losses['recon'] + w_kl * losses['kl']
+
+        # 正则化损失
+        if self.reg_loss is not None and z is not None:
+            losses['reg'] = self.reg_loss(z, mu, logvar)
+            total = total + self.reg_weight * losses['reg']
+
+        # 感知损失（简化版）
+        if self.perceptual_weight > 0:
+            losses['perceptual'] = self._compute_perceptual_loss(x, recon_x)
+            total = total + self.perceptual_weight * losses['perceptual']
+
+        losses['total'] = total
+
+        # 保存当前 beta 用于日志
+        losses['beta'] = torch.tensor(self._get_beta())
+
+        return losses
+
+    def _get_beta(self) -> float:
+        """获取当前 β 值"""
+        if self.current_epoch < self.warmup_epochs:
+            return self.beta * (self.current_epoch + 1) / self.warmup_epochs
+        return self.beta
+
+    def _compute_perceptual_loss(self, x: Tensor, recon_x: Tensor) -> Tensor:
+        """
+        计算感知损失
+
+        使用简单的梯度损失作为感知损失的替代。
+        """
+        # 水平梯度
+        grad_x_h = torch.abs(x[:, :, 1:] - x[:, :, :-1])
+        grad_r_h = torch.abs(recon_x[:, :, 1:] - recon_x[:, :, :-1])
+
+        # 垂直梯度
+        grad_x_v = torch.abs(x[:, 1:, :] - x[:, :-1, :])
+        grad_r_v = torch.abs(recon_x[:, 1:, :] - recon_x[:, :-1, :])
+
+        # 梯度损失
+        loss_h = F.mse_loss(grad_r_h, grad_x_h)
+        loss_v = F.mse_loss(grad_r_v, grad_x_v)
+
+        return loss_h + loss_v
+
+    def step(self):
+        """推进一个 epoch"""
+        self.current_epoch += 1
+        if self.reg_loss is not None:
+            self.reg_loss.step()
+
+
+class VAEScheduler:
+    """
+    VAE 训练调度器
+
+    管理 β 和容量等参数的动态调整:
+    - 线性/周期性预热
+    - 容量增长
+    - 自适应调整
+    """
+
+    def __init__(
+        self,
+        loss_fn: VAETotalLoss,
+        schedule_type: str = 'linear',
+        max_epochs: int = 100
+    ):
+        """
+        Args:
+            loss_fn: VAE 损失函数
+            schedule_type: 调度类型 ('linear', 'cyclical', 'capacity')
+            max_epochs: 最大训练 epoch 数
+        """
+        self.loss_fn = loss_fn
+        self.schedule_type = schedule_type
+        self.max_epochs = max_epochs
+        self.current_epoch = 0
+
+    def step(self):
+        """推进一个 epoch"""
+        self.current_epoch += 1
+        self.loss_fn.step()
+
+    def get_current_beta(self) -> float:
+        """获取当前 β 值"""
+        return self.loss_fn._get_beta()
+
+    def state_dict(self) -> Dict[str, Any]:
+        """获取状态字典"""
+        return {
+            'current_epoch': self.current_epoch,
+            'schedule_type': self.schedule_type,
+            'max_epochs': self.max_epochs
+        }
+
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """加载状态字典"""
+        self.current_epoch = state_dict['current_epoch']
+        self.schedule_type = state_dict['schedule_type']
+        self.max_epochs = state_dict['max_epochs']
+
+
 # 损失函数工厂
 LOSS_REGISTRY = {
     'mse': nn.MSELoss,
@@ -1173,7 +1738,13 @@ LOSS_REGISTRY = {
     'helmholtz': HelmholtzLoss,
     'maxwell': MaxwellLoss,
     'boundary_condition': BoundaryConditionLoss,
-    'pinn_combined': PINNCombinedLoss
+    'pinn_combined': PINNCombinedLoss,
+    # VAE 损失函数
+    'vae_recon': VAEReconstructionLoss,
+    'kl_divergence': KLDivergenceLoss,
+    'beta_vae': BetaVAELoss,
+    'vae_latent_reg': VAELatentRegularization,
+    'vae_total': VAETotalLoss
 }
 
 

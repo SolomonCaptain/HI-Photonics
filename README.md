@@ -37,7 +37,7 @@ HI-Photonics/
 │   │   ├── cgan.py     # Conditional GAN
 │   │   ├── pinn.py     # Physics-Informed Neural Network
 │   │   ├── gnn.py      # Graph Neural Network
-│   │   └── hilab.py    # HiLab 模型
+│   │   └── hilab.py    # HiLab 混合逆向设计框架 (VAE + 贝叶斯优化)
 │   ├── surrogates/     # 代理模型
 │   │   ├── cnn_surrogate.py
 │   │   ├── deeponet.py
@@ -67,7 +67,7 @@ HI-Photonics/
 │   └── solvers/        # 求解器
 │       ├── gradient_based.py
 │       ├── evolutionary.py
-│       └── bayesian.py
+│       └── bayesian.py  # 贝叶斯优化 (GP + EI/UCB/PI)
 ├── data/               # 数据管理
 │   ├── generators/     # 数据生成器
 │   ├── loaders/        # 数据加载器
@@ -80,7 +80,12 @@ HI-Photonics/
 │   ├── 01_basic_design.ipynb
 │   ├── 02_mdn_vs_tnn_comparison.ipynb
 │   ├── 03_hilab_workflow.ipynb
-│   └── *.py            # 各模型示例
+│   ├── 04_meep_simulation.py
+│   ├── 05_tnn_inverse_design.py
+│   ├── 06_mdn_inverse_design.py
+│   ├── 07_cgan_inverse_design.py
+│   ├── 08_pinn_inverse_design.py
+│   └── 09_hilab_workflow.py
 ├── tests/              # 测试代码
 ├── docs/               # 文档
 └── environment/        # 环境配置
@@ -156,6 +161,39 @@ BaseModel (nn.Module)
 | CGAN | 条件生成 | 支持多样性和模式覆盖 |
 | PINN | 物理约束设计 | 融入 Maxwell 方程 |
 | GNN | 结构化设计 | 处理图结构数据 |
+| HiLab | 混合逆向设计 | VAE + 贝叶斯优化，高效潜在空间搜索 |
+
+### 5. HiLab 混合逆向设计框架
+
+HiLab 结合 VAE 潜在空间学习与贝叶斯优化，实现高效的光子学逆向设计：
+
+```python
+from models.inverse.hilab import HiLABEngine, HiLABConfig, VAEConfig
+
+# 创建 HiLAB 引擎
+config = HiLABConfig(
+    vae_config=VAEConfig(latent_dim=32, design_shape=(100, 22)),
+    performance_dim=3
+)
+engine = HiLABEngine(config)
+
+# 训练 VAE 学习设计空间
+engine.train_vae(train_loader, epochs=100)
+
+# 训练代理模型
+engine.train_surrogate(data_loader, epochs=50)
+
+# 逆向设计
+target = torch.tensor([[0.95, 0.8, 0.1]])
+design = engine.inverse_design(target, n_iterations=30)
+```
+
+**工作流程:**
+1. VAE 训练: 学习设计空间的低维潜在表示
+2. 代理模型: 建立潜在向量到性能的映射
+3. 贝叶斯优化: 在潜在空间中搜索最优设计
+4. 解码生成: 将潜在向量解码为设计参数
+| HiLab | 混合逆向设计 | VAE + 贝叶斯优化，高效潜在空间搜索 |
 
 ### 4. 仿真器接口 (interfaces/simulators/)
 
@@ -202,6 +240,15 @@ python examples/05_tnn_inverse_design.py
 
 # 运行 MDN 逆向设计示例
 python examples/06_mdn_inverse_design.py
+
+# 运行 CGAN 逆向设计示例
+python examples/07_cgan_inverse_design.py
+
+# 运行 PINN 逆向设计示例
+python examples/08_pinn_inverse_design.py
+
+# 运行 HiLab 混合逆向设计示例
+python examples/09_hilab_workflow.py
 
 # 运行 Meep 仿真示例 (需安装 Meep)
 python examples/04_meep_simulation.py
