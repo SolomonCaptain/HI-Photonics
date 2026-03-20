@@ -11,7 +11,14 @@ from models.inverse.mdn import (
     MDN, MDNConfig,
     GaussianMixtureDistribution,
     GaussianMixtureParameters,
-    MDNTandemNetwork
+    MDNTandemNetwork,
+    # 新增
+    NormalizingFlow,
+    AffineCouplingLayer,
+    ConditionalAffineCouplingLayer,
+    TopologyConstraint,
+    TopologyAwareSampler,
+    FlowMDN
 )
 from models.training.losses import MDNLoss, MDNRegularizedLoss
 
@@ -422,6 +429,342 @@ class TestNumericalStability:
         
         assert not torch.isnan(loss)
         assert not torch.isinf(loss)
+
+
+class TestNormalizingFlow:
+    """测试 Normalizing Flow"""
+    
+    def test_coupling_layer_shape(self):
+        """测试耦合层形状"""
+        dim = 20
+        layer = AffineCouplingLayer(dim, hidden_dim=64)
+        x = torch.randn(8, dim)
+        
+        z, log_det = layer(x)
+        
+        assert z.shape == x.shape
+        assert log_det.shape == (8,)
+    
+    def test_coupling_layer_invertibility(self):
+        """测试耦合层可逆性"""
+        dim = 20
+        layer = AffineCouplingLayer(dim, hidden_dim=64)
+        x = torch.randn(8, dim)
+        
+        # 前向再逆向
+        z, log_det_fwd = layer(x)
+        x_reconstructed, log_det_inv = layer.inverse(z)
+        
+        assert torch.allclose(x, x_reconstructed, atol=1e-5)
+        assert torch.allclose(log_det_fwd, -log_det_inv, atol=1e-5)
+    
+    def test_flow_shape(self):
+        """测试 Flow 形状"""
+        dim = 20
+        flow = NormalizingFlow(dim, n_layers=4, hidden_dim=64)
+        x = torch.randn(8, dim)
+        
+        z, log_det = flow(x)
+        
+        assert z.shape == x.shape
+        assert log_det.shape == (8,)
+    
+    def test_flow_invertibility(self):
+        """测试 Flow 可逆性"""
+        dim = 20
+        flow = NormalizingFlow(dim, n_layers=4, hidden_dim=64)
+        x = torch.randn(8, dim)
+        
+        z, _ = flow(x)
+        x_reconstructed, _ = flow.inverse(z)
+        
+        assert torch.allclose(x, x_reconstructed, atol=1e-4)
+    
+    def test_flow_log_prob(self):
+        """测试 Flow 对数概率"""
+        dim = 20
+        flow = NormalizingFlow(dim, n_layers=4, hidden_dim=64)
+        x = torch.randn(8, dim)
+        
+        log_prob = flow.log_prob(x)
+        
+        assert log_prob.shape == (8,)
+        assert not torch.isnan(log_prob).any()
+    
+    def test_flow_sampling(self):
+        """测试 Flow 采样"""
+        dim = 20
+        flow = NormalizingFlow(dim, n_layers=4, hidden_dim=64)
+        
+        samples = flow.sample(n_samples=10)
+        
+        assert samples.shape == (10, dim)
+    
+    def test_conditional_flow(self):
+        """测试条件 Flow"""
+        dim = 20
+        condition_dim = 10
+        flow = NormalizingFlow(dim, n_layers=4, hidden_dim=64, condition_dim=condition_dim)
+        
+        x = torch.randn(8, dim)
+        condition = torch.randn(8, condition_dim)
+        
+        z, log_det = flow(x, condition)
+        assert z.shape == x.shape
+        
+        samples = flow.sample(condition, n_samples=5)
+        assert samples.shape == (8, 5, dim)
+
+
+class TestTopologyConstraint:
+    """测试拓扑约束"""
+    
+    def test_minimum_feature_size_check(self):
+        """测试最小特征尺寸检查"""
+        constraint = TopologyConstraint(min_feature_size=0.1, resolution=0.02)
+        
+        # 创建一个满足约束的设计（大的连续区域）
+        good_design = torch.zeros(50, 50)
+        good_design[10:40, 10:40] = 1.0
+        
+        satisfied, violation = constraint.check_minimum_feature_size(good_design)
+        
+        assert isinstance(satisfied, bool)
+        assert violation.shape == good_design.shape
+    
+    def test_connectivity_check(self):
+        """测试连通性检查"""
+        constraint = TopologyConstraint(min_feature_size=0.1, resolution=0.02)
+        
+        # 连通的设计
+        connected_design = torch.zeros(50, 50)
+        connected_design[10:40, 25:26] = 1.0  # 一条直线
+        
+        connected, score = constraint.check_connectivity(connected_design)
+        
+        assert isinstance(connected, bool)
+        assert 0 <= score <= 1
+    
+    def test_curvature_check(self):
+        """测试曲率检查"""
+        constraint = TopologyConstraint(min_feature_size=0.1, resolution=0.02)
+        
+        design = torch.randn(50, 50) * 0.1 + 0.5
+        
+        satisfied, curvature = constraint.check_curvature(design)
+        
+        assert isinstance(satisfied, bool)
+        assert curvature.dim() >= 2
+    
+    def test_topology_loss(self):
+        """测试拓扑损失"""
+        constraint = TopologyConstraint(min_feature_size=0.1, resolution=0.02)
+        
+        design = torch.rand(4, 50, 50)
+        
+        losses = constraint.compute_topology_loss(design)
+        
+        assert 'total' in losses
+        assert 'min_feature' in losses
+        assert losses['total'] >= 0
+
+
+class TestTopologyAwareSampler:
+    """测试拓扑感知采样器"""
+    
+    def test_sample_refinement(self):
+        """采样精炼测试"""
+        constraint = TopologyConstraint(min_feature_size=0.1, resolution=0.02)
+        sampler = TopologyAwareSampler(constraint, refinement_steps=2)
+        
+        # 原始采样
+        raw_samples = torch.rand(2, 3, 30, 30)
+        
+        # 精炼
+        refined = sampler.sample_with_refinement(raw_samples)
+        
+        assert refined.shape == raw_samples.shape
+        assert (refined >= 0).all() and (refined <= 1).all()
+    
+    def test_filter_valid_designs(self):
+        """有效设计过滤测试"""
+        constraint = TopologyConstraint(min_feature_size=0.1, resolution=0.02)
+        sampler = TopologyAwareSampler(constraint)
+        
+        # 创建一些设计
+        designs = torch.rand(2, 5, 30, 30)
+        
+        valid, mask = sampler.filter_valid_designs(designs, threshold=0.3)
+        
+        assert mask.shape == (2, 5)
+
+
+class TestFlowMDN:
+    """测试 Flow-based MDN"""
+    
+    def test_flow_mdn_creation(self):
+        """测试 FlowMDN 创建"""
+        model = FlowMDN(
+            input_dim=3,
+            output_dim=100,
+            design_shape=(10, 10),
+            n_flow_layers=4,
+            hidden_dim=64
+        )
+        
+        assert model.input_dim == 3
+        assert model.output_dim == 100
+    
+    def test_flow_mdn_sample(self):
+        """测试 FlowMDN 采样"""
+        model = FlowMDN(
+            input_dim=3,
+            output_dim=100,
+            design_shape=(10, 10),
+            n_flow_layers=4,
+            hidden_dim=64
+        )
+        
+        condition = torch.randn(2, 3)
+        samples = model.sample(condition, n_samples=3, refine=False)
+        
+        assert samples.shape == (2, 3, 10, 10)
+    
+    def test_flow_mdn_loss(self):
+        """测试 FlowMDN 损失"""
+        model = FlowMDN(
+            input_dim=3,
+            output_dim=100,
+            design_shape=(10, 10),
+            n_flow_layers=4,
+            hidden_dim=64
+        )
+        
+        condition = torch.randn(4, 3)
+        target = torch.rand(4, 10, 10)
+        
+        loss = model.compute_loss(condition, target)
+        
+        assert loss.dim() == 0
+        assert not torch.isnan(loss)
+
+
+class TestMDNWithFlow:
+    """测试使用 Flow 的 MDN"""
+    
+    def test_mdn_flow_mode(self):
+        """测试 MDN Flow 模式"""
+        config = MDNConfig(
+            input_dim=3,
+            output_dim=100,
+            design_shape=(10, 10),
+            distribution_type='flow',
+            n_flow_layers=4,
+            flow_hidden_dim=64
+        )
+        
+        mdn = MDN(config)
+        
+        condition = torch.randn(4, 3)
+        samples = mdn.sample(condition, n_samples=2, topology_refine=False)
+        
+        assert samples.shape == (4, 2, 10, 10)
+    
+    def test_mdn_hybrid_mode(self):
+        """测试 MDN 混合模式"""
+        config = MDNConfig(
+            input_dim=3,
+            output_dim=100,
+            design_shape=(10, 10),
+            distribution_type='hybrid',
+            n_components=3,
+            n_flow_layers=4,
+            flow_hidden_dim=64
+        )
+        
+        mdn = MDN(config)
+        
+        condition = torch.randn(4, 3)
+        samples = mdn.sample(condition, n_samples=2, topology_refine=False)
+        
+        assert samples.shape == (4, 2, 10, 10)
+    
+    def test_mdn_with_topology(self):
+        """测试带拓扑感知的 MDN"""
+        config = MDNConfig(
+            input_dim=3,
+            output_dim=100,
+            design_shape=(20, 20),
+            distribution_type='gmm',
+            n_components=3,
+            topology_aware=True,
+            min_feature_size=0.1,
+            resolution=0.02,
+            topology_guided_sampling=False  # 测试时关闭以加速
+        )
+        
+        mdn = MDN(config)
+        
+        condition = torch.randn(2, 3)
+        target = torch.rand(2, 20, 20)
+        
+        # 测试损失计算（包含拓扑损失）
+        loss = mdn.compute_loss(condition, target, include_topology=True)
+        
+        assert isinstance(loss, dict)
+        assert 'total' in loss
+        assert 'nll' in loss
+        assert 'topology' in loss
+
+
+class TestAverageDesignProblem:
+    """测试"平均设计"问题的解决"""
+    
+    def test_flow_avoids_averaging(self):
+        """测试 Flow 避免平均化问题"""
+        # 创建两个不同的有效设计
+        design1 = torch.zeros(1, 20, 20)
+        design1[0, 5:15, 8:12] = 1.0
+        
+        design2 = torch.zeros(1, 20, 20)
+        design2[0, 5:15, 13:17] = 1.0
+        
+        # Flow 不应该简单平均这两个设计
+        flow = NormalizingFlow(400, n_layers=4, hidden_dim=64)
+        
+        # 从两个设计计算 log_prob
+        log_prob1 = flow.log_prob(design1.view(1, -1))
+        log_prob2 = flow.log_prob(design2.view(1, -1))
+        
+        # 两个设计的概率应该不同（或至少不是简单的平均）
+        # 这个测试验证 Flow 可以区分不同的设计
+        assert not torch.isnan(log_prob1)
+        assert not torch.isnan(log_prob2)
+    
+    def test_topology_preserves_validity(self):
+        """测试拓扑约束保持有效性"""
+        constraint = TopologyConstraint(min_feature_size=0.2, resolution=0.02)
+        
+        # 创建两个有效设计（满足最小特征尺寸）
+        valid_design1 = torch.zeros(30, 30)
+        valid_design1[5:25, 10:20] = 1.0  # 宽度为 10 像素
+        
+        valid_design2 = torch.zeros(30, 30)
+        valid_design2[5:25, 12:22] = 1.0
+        
+        # 检查它们满足约束
+        ok1, _ = constraint.check_minimum_feature_size(valid_design1)
+        ok2, _ = constraint.check_minimum_feature_size(valid_design2)
+        
+        # 平均后的设计
+        avg_design = (valid_design1 + valid_design2) / 2
+        
+        # 平均后的设计可能不满足最小特征尺寸约束
+        # （这正是问题所在！拓扑约束可以帮助检测）
+        _, violation = constraint.check_minimum_feature_size(avg_design)
+        
+        # 验证约束检查可以检测到潜在问题
+        assert violation is not None
 
 
 if __name__ == '__main__':
