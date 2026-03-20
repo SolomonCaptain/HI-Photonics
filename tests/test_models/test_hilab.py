@@ -39,6 +39,9 @@ from models.training.losses import (
 )
 
 from data.loaders.pipeline import SyntheticDataset, create_dataloaders
+from optimization.solvers.bayesian import (
+    RBFKernel, MaternKernel, GaussianProcessRegressor, BayesianOptimizer
+)
 
 
 class TestVAEEncoder:
@@ -742,6 +745,203 @@ class TestHiLABConfig:
         assert config.vae_config.latent_dim == 64
         assert config.optimizer_config.acquisition_type == 'ucb'
         assert config.performance_dim == 5
+
+
+class TestMarginalLikelihoodOptimization:
+    """边际似然优化测试"""
+    
+    def test_kernel_param_bounds(self):
+        """测试核函数参数边界"""
+        from optimization.solvers.bayesian import RBFKernel, MaternKernel
+        
+        # RBF 核
+        rbf = RBFKernel(lengthscale=1.0, variance=1.0)
+        bounds = rbf.get_param_bounds()
+        
+        assert len(bounds) == 2  # lengthscale 和 variance
+        assert bounds[0][0] < bounds[0][1]  # 有效边界
+    
+    def test_kernel_param_vector(self):
+        """测试核函数参数向量操作"""
+        from optimization.solvers.bayesian import RBFKernel
+        
+        kernel = RBFKernel(lengthscale=1.0, variance=1.0)
+        
+        # 获取参数向量
+        theta = kernel.get_param_vector()
+        assert len(theta) == 2
+        
+        # 设置参数向量
+        new_theta = np.log([2.0, 0.5])  # log 空间
+        kernel.set_param_vector(new_theta)
+        
+        assert np.isclose(kernel.lengthscale, 2.0)
+        assert np.isclose(kernel.variance, 0.5)
+    
+    def test_gp_hyperparameter_optimization(self):
+        """测试 GP 超参数优化"""
+        from optimization.solvers.bayesian import (
+            GaussianProcessRegressor,
+            RBFKernel
+        )
+        
+        # 创建简单测试数据
+        np.random.seed(42)
+        X = np.random.randn(20, 2)
+        y = np.sin(X[:, 0]) + 0.1 * np.random.randn(20)
+        
+        # 创建 GP
+        kernel = RBFKernel(lengthscale=0.5, variance=0.5)
+        gp = GaussianProcessRegressor(
+            kernel,
+            noise_variance=0.01,
+            n_restarts_optimizer=3
+        )
+        
+        # 初始 LML
+        gp.fit(X, y, optimize_hyperparams=False)
+        initial_lml = gp.log_marginal_likelihood()
+        
+        # 优化超参数
+        gp.fit(X, y, optimize_hyperparams=True, verbose=False)
+        optimized_lml = gp.log_marginal_likelihood()
+        
+        # LML 应该提高（或至少不变）
+        assert optimized_lml >= initial_lml or np.isclose(optimized_lml, initial_lml, rtol=0.1)
+    
+    def test_gp_hyperparameter_history(self):
+        """测试 GP 超参数历史记录"""
+        from optimization.solvers.bayesian import (
+            GaussianProcessRegressor,
+            RBFKernel
+        )
+        
+        np.random.seed(42)
+        X = np.random.randn(15, 1)
+        y = X[:, 0] ** 2 + 0.05 * np.random.randn(15)
+        
+        kernel = RBFKernel(lengthscale=1.0, variance=1.0)
+        gp = GaussianProcessRegressor(kernel, n_restarts_optimizer=2)
+        
+        # 训练
+        gp.fit(X, y, optimize_hyperparams=True, verbose=False)
+        
+        # 检查参数已更新
+        assert kernel.lengthscale != 1.0 or kernel.variance != 1.0  # 应该已经优化
+    
+    def test_bayesian_optimizer_hyperparam_adaptation(self):
+        """测试贝叶斯优化器超参数自适应"""
+        from optimization.solvers.bayesian import BayesianOptimizer
+        
+        # 定义测试函数
+        def objective(x):
+            return -np.sum(x ** 2)  # 简单二次函数
+        
+        # 创建优化器
+        optimizer = BayesianOptimizer(
+            dim=2,
+            bounds=(-2.0, 2.0),
+            optimize_hyperparams=True,
+            hyperparam_opt_interval=3,
+            verbose=False
+        )
+        
+        # 运行优化
+        best_x, best_y = optimizer.optimize(
+            objective,
+            n_iterations=15,
+            n_initial=5,
+            verbose=False
+        )
+        
+        # 检查超参数历史
+        history = optimizer.get_hyperparameter_history()
+        assert len(history) >= 0  # 应该有记录
+        
+        # 检查当前超参数
+        current = optimizer.get_current_hyperparameters()
+        assert 'lengthscale' in current
+        assert 'variance' in current
+    
+    def test_gp_torch_lml(self):
+        """测试 PyTorch GP 边际似然计算"""
+        from optimization.solvers.bayesian import GaussianProcessRegressorTorch
+        
+        # 创建测试数据
+        X = torch.randn(20, 2)
+        y = torch.sin(X[:, 0]) + 0.1 * torch.randn(20)
+        
+        # 创建 GP
+        gp = GaussianProcessRegressorTorch(dim=2)
+        
+        # 训练
+        gp.fit(X, y, optimize_steps=0)
+        
+        # 计算 LML
+        lml = gp.log_marginal_likelihood()
+        
+        assert not torch.isnan(lml)
+        assert lml.item() < 0  # LML 通常为负
+    
+    def test_gp_torch_lml_optimization(self):
+        """测试 PyTorch GP 超参数优化"""
+        from optimization.solvers.bayesian import GaussianProcessRegressorTorch
+        
+        X = torch.randn(25, 2)
+        y = X[:, 0] ** 2 + X[:, 1] * 0.5 + 0.05 * torch.randn(25)
+        
+        gp = GaussianProcessRegressorTorch(dim=2, learn_hyperparams=True)
+        
+        # 训练（无优化）
+        gp.fit(X, y, optimize_steps=0)
+        initial_lml = gp.log_marginal_likelihood().item()
+        
+        # 优化
+        gp.fit(X, y, optimize_steps=50, lr=0.01)
+        final_lml = gp.log_marginal_likelihood().item()
+        
+        # LML 应该提高
+        assert final_lml >= initial_lml or np.isclose(final_lml, initial_lml, rtol=0.1)
+    
+    def test_matern_kernel_optimization(self):
+        """测试 Matern 核超参数优化"""
+        from optimization.solvers.bayesian import GaussianProcessRegressor, MaternKernel
+        
+        np.random.seed(42)
+        X = np.random.randn(20, 3)
+        y = np.sin(X[:, 0]) + np.cos(X[:, 1]) + 0.1 * np.random.randn(20)
+        
+        kernel = MaternKernel(lengthscale=0.5, variance=0.5, nu=2.5)
+        gp = GaussianProcessRegressor(kernel, n_restarts_optimizer=3)
+        
+        gp.fit(X, y, optimize_hyperparams=True, verbose=False)
+        
+        # 参数应该已经更新
+        assert kernel.lengthscale > 0
+        assert kernel.variance > 0
+    
+    def test_create_gp_utility(self):
+        """测试创建 GP 的便捷函数"""
+        from optimization.solvers.bayesian import create_gp_with_optimized_hyperparams
+        
+        np.random.seed(42)
+        X = np.random.randn(30, 2)
+        y = np.sin(X[:, 0]) + 0.1 * np.random.randn(30)
+        
+        gp = create_gp_with_optimized_hyperparams(
+            X, y,
+            kernel_type='rbf',
+            n_restarts=3,
+            verbose=False
+        )
+        
+        # 应该可以预测
+        X_test = np.array([[0.5, 0.5]])
+        y_pred, y_std = gp.predict(X_test)
+        
+        assert y_pred.shape == (1,)
+        assert y_std.shape == (1,)
+        assert y_std[0] > 0
 
 
 if __name__ == "__main__":

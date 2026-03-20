@@ -29,11 +29,77 @@ from scipy.stats import norm
 # ============================================================================
 
 class KernelFunction:
-    """核函数基类"""
+    """
+    核函数基类
+    
+    支持边际似然优化的可学习参数。
+    参数存储在 log 空间以确保正值约束。
+    """
+    
+    # 参数边界（默认值）
+    LENGTHSCALE_BOUNDS = (1e-4, 1e4)
+    VARIANCE_BOUNDS = (1e-6, 1e6)
+    NOISE_BOUNDS = (1e-8, 1e2)
 
-    def __init__(self, lengthscale: float = 1.0, variance: float = 1.0):
-        self.lengthscale = lengthscale
-        self.variance = variance
+    def __init__(
+        self, 
+        lengthscale: float = 1.0, 
+        variance: float = 1.0,
+        learn_lengthscale: bool = True,
+        learn_variance: bool = True
+    ):
+        """
+        Args:
+            lengthscale: 初始长度尺度
+            variance: 初始方差
+            learn_lengthscale: 是否学习 lengthscale
+            learn_variance: 是否学习 variance
+        """
+        # 使用 log 参数确保正值
+        self._log_lengthscale = np.log(lengthscale)
+        self._log_variance = np.log(variance)
+        
+        # 学习标志
+        self.learn_lengthscale = learn_lengthscale
+        self.learn_variance = learn_variance
+        
+        # 参数边界
+        self.bounds = {
+            'lengthscale': self.LENGTHSCALE_BOUNDS,
+            'variance': self.VARIANCE_BOUNDS
+        }
+    
+    @property
+    def lengthscale(self) -> float:
+        return np.exp(self._log_lengthscale)
+    
+    @lengthscale.setter
+    def lengthscale(self, value: float):
+        self._log_lengthscale = np.log(max(value, 1e-10))
+    
+    @property
+    def variance(self) -> float:
+        return np.exp(self._log_variance)
+    
+    @variance.setter
+    def variance(self, value: float):
+        self._log_variance = np.log(max(value, 1e-10))
+    
+    @property
+    def log_lengthscale(self) -> float:
+        return self._log_lengthscale
+    
+    @log_lengthscale.setter
+    def log_lengthscale(self, value: float):
+        self._log_lengthscale = value
+    
+    @property
+    def log_variance(self) -> float:
+        return self._log_variance
+    
+    @log_variance.setter
+    def log_variance(self, value: float):
+        self._log_variance = value
 
     def __call__(self, X1: np.ndarray, X2: np.ndarray) -> np.ndarray:
         raise NotImplementedError
@@ -41,6 +107,58 @@ class KernelFunction:
     def diagonal(self, X: np.ndarray) -> np.ndarray:
         """计算核矩阵的对角元素"""
         return np.full(len(X), self.variance)
+    
+    def get_params(self) -> Dict[str, float]:
+        """获取参数（log 空间）"""
+        return {
+            'log_lengthscale': self._log_lengthscale,
+            'log_variance': self._log_variance
+        }
+    
+    def set_params(self, params: Dict[str, float]):
+        """设置参数（log 空间）"""
+        if 'log_lengthscale' in params:
+            self._log_lengthscale = params['log_lengthscale']
+        if 'log_variance' in params:
+            self._log_variance = params['log_variance']
+    
+    def get_param_bounds(self) -> List[Tuple[float, float]]:
+        """获取优化边界（log 空间）"""
+        bounds = []
+        if self.learn_lengthscale:
+            bounds.append((np.log(self.bounds['lengthscale'][0]), 
+                          np.log(self.bounds['lengthscale'][1])))
+        if self.learn_variance:
+            bounds.append((np.log(self.bounds['variance'][0]), 
+                          np.log(self.bounds['variance'][1])))
+        return bounds
+    
+    def get_param_vector(self) -> np.ndarray:
+        """获取参数向量（用于优化）"""
+        params = []
+        if self.learn_lengthscale:
+            params.append(self._log_lengthscale)
+        if self.learn_variance:
+            params.append(self._log_variance)
+        return np.array(params)
+    
+    def set_param_vector(self, theta: np.ndarray):
+        """从向量设置参数"""
+        idx = 0
+        if self.learn_lengthscale:
+            self._log_lengthscale = theta[idx]
+            idx += 1
+        if self.learn_variance:
+            self._log_variance = theta[idx]
+    
+    def param_names(self) -> List[str]:
+        """参数名称列表"""
+        names = []
+        if self.learn_lengthscale:
+            names.append('lengthscale')
+        if self.learn_variance:
+            names.append('variance')
+        return names
 
 
 class RBFKernel(KernelFunction):
@@ -76,8 +194,15 @@ class MaternKernel(KernelFunction):
     其中 r = ||x - x'||, ν 控制平滑度 (常用 1.5 或 2.5)
     """
 
-    def __init__(self, lengthscale: float = 1.0, variance: float = 1.0, nu: float = 2.5):
-        super().__init__(lengthscale, variance)
+    def __init__(
+        self, 
+        lengthscale: float = 1.0, 
+        variance: float = 1.0, 
+        nu: float = 2.5,
+        learn_lengthscale: bool = True,
+        learn_variance: bool = True
+    ):
+        super().__init__(lengthscale, variance, learn_lengthscale, learn_variance)
         self.nu = nu
 
     def __call__(self, X1: np.ndarray, X2: np.ndarray) -> np.ndarray:
@@ -125,6 +250,8 @@ class SpectralMixtureKernel(KernelFunction):
     k(x, x') = Σ_q σ_q² * exp(-2π² τ² / l_q²) * cos(2π τ μ_q)
 
     其中 τ = ||x - x'||, Q 是混合数
+    
+    所有参数均可通过边际似然优化学习。
     """
 
     def __init__(
@@ -132,14 +259,100 @@ class SpectralMixtureKernel(KernelFunction):
         n_mixtures: int = 4,
         lengthscales: Optional[List[float]] = None,
         variances: Optional[List[float]] = None,
-        frequencies: Optional[List[float]] = None
+        frequencies: Optional[List[float]] = None,
+        learn_all: bool = True
     ):
+        """
+        Args:
+            n_mixtures: 混合分量数
+            lengthscales: 初始长度尺度列表
+            variances: 初始方差列表
+            frequencies: 初始频率列表
+            learn_all: 是否学习所有参数
+        """
         self.n_mixtures = n_mixtures
-
-        # 默认参数
-        self.lengthscales = lengthscales or [1.0] * n_mixtures
-        self.variances = variances or [1.0 / n_mixtures] * n_mixtures
-        self.frequencies = frequencies or [0.1 * i for i in range(n_mixtures)]
+        self.learn_all = learn_all
+        
+        # 默认参数（存储在 log 空间）
+        self._log_lengthscales = np.log(np.array(lengthscales or [1.0] * n_mixtures))
+        self._log_variances = np.log(np.array(variances or [1.0 / n_mixtures] * n_mixtures))
+        self._frequencies = np.array(frequencies or [0.1 * i for i in range(n_mixtures)])
+        
+        # 参数边界
+        self.bounds = {
+            'lengthscales': [(1e-4, 1e4)] * n_mixtures,
+            'variances': [(1e-6, 1e6)] * n_mixtures,
+            'frequencies': [(0.0, 10.0)] * n_mixtures
+        }
+    
+    @property
+    def lengthscales(self) -> np.ndarray:
+        return np.exp(self._log_lengthscales)
+    
+    @property
+    def variances(self) -> np.ndarray:
+        return np.exp(self._log_variances)
+    
+    @property
+    def frequencies(self) -> np.ndarray:
+        return self._frequencies
+    
+    def get_params(self) -> Dict[str, np.ndarray]:
+        """获取参数"""
+        return {
+            'log_lengthscales': self._log_lengthscales.copy(),
+            'log_variances': self._log_variances.copy(),
+            'frequencies': self._frequencies.copy()
+        }
+    
+    def set_params(self, params: Dict[str, np.ndarray]):
+        """设置参数"""
+        if 'log_lengthscales' in params:
+            self._log_lengthscales = np.array(params['log_lengthscales'])
+        if 'log_variances' in params:
+            self._log_variances = np.array(params['log_variances'])
+        if 'frequencies' in params:
+            self._frequencies = np.array(params['frequencies'])
+    
+    def get_param_vector(self) -> np.ndarray:
+        """获取参数向量"""
+        if self.learn_all:
+            return np.concatenate([
+                self._log_lengthscales,
+                self._log_variances,
+                self._frequencies
+            ])
+        return np.array([])
+    
+    def set_param_vector(self, theta: np.ndarray):
+        """从向量设置参数"""
+        if not self.learn_all:
+            return
+        
+        n = self.n_mixtures
+        self._log_lengthscales = theta[:n]
+        self._log_variances = theta[n:2*n]
+        self._frequencies = theta[2*n:3*n]
+    
+    def get_param_bounds(self) -> List[Tuple[float, float]]:
+        """获取优化边界"""
+        if not self.learn_all:
+            return []
+        
+        bounds = []
+        for (lo, hi) in self.bounds['lengthscales']:
+            bounds.append((np.log(lo), np.log(hi)))
+        for (lo, hi) in self.bounds['variances']:
+            bounds.append((np.log(lo), np.log(hi)))
+        bounds.extend(self.bounds['frequencies'])
+        return bounds
+    
+    def param_names(self) -> List[str]:
+        """参数名称"""
+        names = []
+        for i in range(self.n_mixtures):
+            names.extend([f'lengthscale_{i}', f'variance_{i}', f'frequency_{i}'])
+        return names
 
     def __call__(self, X1: np.ndarray, X2: np.ndarray) -> np.ndarray:
         X1 = np.atleast_2d(X1)
@@ -151,11 +364,15 @@ class SpectralMixtureKernel(KernelFunction):
         dist = np.sqrt(np.maximum(X1_sq + X2_sq.T - 2 * X1 @ X2.T, 1e-12))
 
         K = np.zeros((X1.shape[0], X2.shape[0]))
+        
+        lengthscales = self.lengthscales
+        variances = self.variances
+        frequencies = self.frequencies
 
         for q in range(self.n_mixtures):
-            l_q = self.lengthscales[q]
-            var_q = self.variances[q]
-            freq_q = self.frequencies[q]
+            l_q = lengthscales[q]
+            var_q = variances[q]
+            freq_q = frequencies[q]
 
             # 高斯部分
             gauss = np.exp(-2 * np.pi ** 2 * dist ** 2 / l_q ** 2)
@@ -176,6 +393,8 @@ class GaussianProcessRegressor:
     高斯过程回归模型
 
     使用核函数定义先验分布，通过训练数据更新后验分布。
+    
+    支持边际似然优化自动学习核函数超参数。
 
     使用示例:
     ```python
@@ -183,8 +402,8 @@ class GaussianProcessRegressor:
     kernel = RBFKernel(lengthscale=1.0, variance=1.0)
     gp = GaussianProcessRegressor(kernel, noise_variance=1e-4)
 
-    # 训练
-    gp.fit(X_train, y_train)
+    # 训练（自动优化超参数）
+    gp.fit(X_train, y_train, optimize_hyperparams=True)
 
     # 预测
     y_mean, y_std = gp.predict(X_test)
@@ -195,17 +414,23 @@ class GaussianProcessRegressor:
         self,
         kernel: Optional[KernelFunction] = None,
         noise_variance: float = 1e-4,
-        normalize_y: bool = True
+        normalize_y: bool = True,
+        learn_noise: bool = True,
+        n_restarts_optimizer: int = 5
     ):
         """
         Args:
             kernel: 核函数
             noise_variance: 观测噪声方差
             normalize_y: 是否标准化目标值
+            learn_noise: 是否学习噪声方差
+            n_restarts_optimizer: 优化器重启次数
         """
         self.kernel = kernel or RBFKernel()
-        self.noise_variance = noise_variance
+        self._noise_variance = noise_variance
         self.normalize_y = normalize_y
+        self.learn_noise = learn_noise
+        self.n_restarts_optimizer = n_restarts_optimizer
 
         # 训练数据
         self.X_train = None
@@ -216,14 +441,41 @@ class GaussianProcessRegressor:
         self.alpha = None  # K^{-1} y
         self.y_mean = 0.0
         self.y_std = 1.0
+        
+        # 边际似然缓存
+        self._log_marginal_likelihood_value = None
+        self._L = None  # Cholesky 分解
+    
+    @property
+    def noise_variance(self) -> float:
+        return self._noise_variance
+    
+    @noise_variance.setter
+    def noise_variance(self, value: float):
+        self._noise_variance = max(value, 1e-10)
 
-    def fit(self, X: np.ndarray, y: np.ndarray):
+    def fit(
+        self, 
+        X: np.ndarray, 
+        y: np.ndarray,
+        optimize_hyperparams: bool = True,
+        optimizer: str = 'lbfgs',
+        n_restarts: Optional[int] = None,
+        verbose: bool = False
+    ):
         """
         训练高斯过程
 
         Args:
             X: 输入 [N, D]
             y: 目标 [N, 1] 或 [N]
+            optimize_hyperparams: 是否优化超参数
+            optimizer: 优化器类型 ('lbfgs', 'adam', 'scipy')
+            n_restarts: 优化重启次数
+            verbose: 是否打印优化信息
+            
+        Returns:
+            self
         """
         X = np.atleast_2d(X)
         y = np.atleast_1d(y).flatten()
@@ -238,7 +490,23 @@ class GaussianProcessRegressor:
             y_normalized = (y - self.y_mean) / self.y_std
         else:
             y_normalized = y
+        
+        # 边际似然优化
+        if optimize_hyperparams:
+            self._optimize_hyperparameters(
+                X, y_normalized, 
+                optimizer=optimizer,
+                n_restarts=n_restarts,
+                verbose=verbose
+            )
 
+        # 预计算核矩阵
+        self._precompute(X, y_normalized)
+
+        return self
+    
+    def _precompute(self, X: np.ndarray, y_normalized: np.ndarray):
+        """预计算核矩阵相关量"""
         # 计算核矩阵
         K = self.kernel(X, X)
 
@@ -248,16 +516,209 @@ class GaussianProcessRegressor:
         # 确保 K 正定
         K = self._ensure_positive_definite(K)
 
-        # 预计算
+        # Cholesky 分解
         try:
+            self._L = np.linalg.cholesky(K)
             self.K_inv = np.linalg.inv(K)
         except np.linalg.LinAlgError:
             # 使用伪逆作为备选
+            self._L = None
             self.K_inv = np.linalg.pinv(K)
 
         self.alpha = self.K_inv @ y_normalized
-
-        return self
+    
+    def _optimize_hyperparameters(
+        self,
+        X: np.ndarray,
+        y_normalized: np.ndarray,
+        optimizer: str = 'lbfgs',
+        n_restarts: Optional[int] = None,
+        verbose: bool = False
+    ):
+        """
+        通过最大化边际似然优化超参数
+        
+        Args:
+            X: 输入数据
+            y_normalized: 标准化的目标值
+            optimizer: 优化器类型
+            n_restarts: 重启次数
+            verbose: 是否打印信息
+        """
+        n_restarts = n_restarts or self.n_restarts_optimizer
+        
+        # 构建参数向量
+        theta0 = self._get_param_vector()
+        bounds = self._get_param_bounds()
+        
+        if len(theta0) == 0:
+            return  # 没有需要优化的参数
+        
+        best_theta = theta0.copy()
+        best_lml = self._compute_log_marginal_likelihood(theta0, X, y_normalized)
+        
+        for i in range(n_restarts):
+            # 随机初始化
+            if i > 0:
+                theta_init = np.array([
+                    np.random.uniform(b[0], b[1]) 
+                    for b in bounds
+                ])
+            else:
+                theta_init = theta0.copy()
+            
+            # 优化
+            try:
+                if optimizer == 'lbfgs':
+                    result = minimize(
+                        lambda t: -self._compute_log_marginal_likelihood(t, X, y_normalized),
+                        theta_init,
+                        method='L-BFGS-B',
+                        bounds=bounds,
+                        options={'maxiter': 100}
+                    )
+                    theta_opt = result.x
+                    lml_opt = -result.fun
+                elif optimizer == 'scipy':
+                    result = minimize(
+                        lambda t: -self._compute_log_marginal_likelihood(t, X, y_normalized),
+                        theta_init,
+                        method='TNC',
+                        bounds=bounds,
+                        options={'maxiter': 100}
+                    )
+                    theta_opt = result.x
+                    lml_opt = -result.fun
+                else:
+                    # 默认使用 L-BFGS-B
+                    result = minimize(
+                        lambda t: -self._compute_log_marginal_likelihood(t, X, y_normalized),
+                        theta_init,
+                        method='L-BFGS-B',
+                        bounds=bounds,
+                        options={'maxiter': 100}
+                    )
+                    theta_opt = result.x
+                    lml_opt = -result.fun
+                
+                if lml_opt > best_lml:
+                    best_lml = lml_opt
+                    best_theta = theta_opt
+                    
+            except Exception as e:
+                if verbose:
+                    print(f"Optimization restart {i+1} failed: {e}")
+                continue
+        
+        # 设置最优参数
+        self._set_param_vector(best_theta)
+        self._log_marginal_likelihood_value = best_lml
+        
+        if verbose:
+            print(f"Optimized hyperparameters: LML = {best_lml:.4f}")
+            for name, val in zip(self._get_param_names(), best_theta):
+                if 'log' in name:
+                    print(f"  {name} = {np.exp(val):.4f}")
+                else:
+                    print(f"  {name} = {val:.4f}")
+    
+    def _get_param_vector(self) -> np.ndarray:
+        """获取所有可学习参数向量"""
+        params = []
+        
+        # 核函数参数
+        kernel_params = self.kernel.get_param_vector()
+        params.extend(kernel_params)
+        
+        # 噪声参数
+        if self.learn_noise:
+            params.append(np.log(self.noise_variance))
+        
+        return np.array(params)
+    
+    def _set_param_vector(self, theta: np.ndarray):
+        """设置所有可学习参数"""
+        idx = 0
+        
+        # 核函数参数
+        kernel_params_len = len(self.kernel.get_param_vector())
+        if kernel_params_len > 0:
+            self.kernel.set_param_vector(theta[:kernel_params_len])
+            idx = kernel_params_len
+        
+        # 噪声参数
+        if self.learn_noise and idx < len(theta):
+            self._noise_variance = np.exp(theta[idx])
+    
+    def _get_param_bounds(self) -> List[Tuple[float, float]]:
+        """获取所有可学习参数的边界"""
+        bounds = list(self.kernel.get_param_bounds())
+        
+        if self.learn_noise:
+            bounds.append((np.log(1e-8), np.log(1e2)))
+        
+        return bounds
+    
+    def _get_param_names(self) -> List[str]:
+        """获取参数名称"""
+        names = list(self.kernel.param_names())
+        if self.learn_noise:
+            names.append('noise_variance')
+        return names
+    
+    def _compute_log_marginal_likelihood(
+        self,
+        theta: np.ndarray,
+        X: np.ndarray,
+        y: np.ndarray
+    ) -> float:
+        """
+        计算对数边际似然
+        
+        log p(y|X, θ) = -1/2 y^T K_y^{-1} y - 1/2 log|K_y| - n/2 log(2π)
+        
+        Args:
+            theta: 参数向量
+            X: 输入
+            y: 标准化的目标值
+            
+        Returns:
+            对数边际似然值
+        """
+        # 设置参数
+        old_theta = self._get_param_vector()
+        self._set_param_vector(theta)
+        
+        try:
+            # 计算核矩阵
+            K = self.kernel(X, X)
+            K += self.noise_variance * np.eye(len(X))
+            
+            # 确保正定
+            K = self._ensure_positive_definite(K)
+            
+            # Cholesky 分解
+            try:
+                L = np.linalg.cholesky(K)
+            except np.linalg.LinAlgError:
+                # 如果失败，返回负无穷
+                self._set_param_vector(old_theta)
+                return -np.inf
+            
+            # 计算对数边际似然
+            n = len(y)
+            alpha = np.linalg.solve(L.T, np.linalg.solve(L, y))
+            logdet = 2 * np.sum(np.log(np.diag(L)))
+            
+            lml = -0.5 * y @ alpha - 0.5 * logdet - 0.5 * n * np.log(2 * np.pi)
+            
+        except Exception:
+            lml = -np.inf
+        
+        # 恢复参数
+        self._set_param_vector(old_theta)
+        
+        return lml
 
     def predict(
         self,
@@ -324,9 +785,20 @@ class GaussianProcessRegressor:
 
         return K
 
-    def log_marginal_likelihood(self) -> float:
-        """计算对数边际似然"""
+    def log_marginal_likelihood(self, compute_gradient: bool = False) -> Union[float, Tuple[float, np.ndarray]]:
+        """
+        计算对数边际似然
+        
+        Args:
+            compute_gradient: 是否计算梯度
+            
+        Returns:
+            lml: 对数边际似然
+            grad_lml: 梯度（可选）
+        """
         if self.X_train is None:
+            if compute_gradient:
+                return 0.0, np.array([])
             return 0.0
 
         N = len(self.y_train)
@@ -338,15 +810,87 @@ class GaussianProcessRegressor:
         K = self._ensure_positive_definite(K)
 
         try:
-            sign, logdet = np.linalg.slogdet(K)
-            if sign <= 0:
-                logdet = N * np.log(1e-10)
+            # Cholesky 分解
+            L = np.linalg.cholesky(K)
+            alpha = np.linalg.solve(L.T, np.linalg.solve(L, y_normalized))
+            logdet = 2 * np.sum(np.log(np.diag(L)))
 
-            lml = -0.5 * y_normalized @ self.alpha - 0.5 * logdet - 0.5 * N * np.log(2 * np.pi)
-        except:
+            lml = -0.5 * y_normalized @ alpha - 0.5 * logdet - 0.5 * N * np.log(2 * np.pi)
+            self._log_marginal_likelihood_value = lml
+            
+            if compute_gradient:
+                # 计算梯度（如果需要）
+                grad = self._compute_lml_gradient(L, alpha)
+                return lml, grad
+            
+        except Exception:
             lml = -np.inf
-
+        
+        if compute_gradient:
+            return lml, np.array([])
         return lml
+    
+    def _compute_lml_gradient(self, L: np.ndarray, alpha: np.ndarray) -> np.ndarray:
+        """
+        计算对数边际似然关于参数的梯度
+        
+        ∂L/∂θ_j = 0.5 * trace((αα^T - K^{-1}) ∂K/∂θ_j)
+        
+        Args:
+            L: Cholesky 分解
+            alpha: K^{-1} y
+            
+        Returns:
+            梯度向量
+        """
+        K = self.kernel(self.X_train, self.X_train)
+        K_inv = np.linalg.inv(self._ensure_positive_definite(
+            K + self.noise_variance * np.eye(len(K))
+        ))
+        
+        # A = αα^T - K^{-1}
+        A = np.outer(alpha, alpha) - K_inv
+        
+        gradients = []
+        
+        # 核函数参数的梯度
+        param_names = self.kernel.param_names()
+        theta = self.kernel.get_param_vector()
+        
+        for i, name in enumerate(param_names):
+            if name == 'lengthscale':
+                # ∂K/∂l = K * (||x - x'||^2 / l^3)
+                dK_dl = self._compute_kernel_gradient_lengthscale()
+                grad = 0.5 * np.trace(A @ dK_dl)
+                gradients.append(grad)
+            elif name == 'variance':
+                # ∂K/∂σ² = K / σ²
+                dK_dvar = K / self.kernel.variance
+                grad = 0.5 * np.trace(A @ dK_dvar)
+                gradients.append(grad)
+        
+        # 噪声参数的梯度
+        if self.learn_noise:
+            dK_dnoise = np.eye(len(K))
+            grad = 0.5 * np.trace(A @ dK_dnoise)
+            gradients.append(grad)
+        
+        return np.array(gradients)
+    
+    def _compute_kernel_gradient_lengthscale(self) -> np.ndarray:
+        """计算核矩阵关于 lengthscale 的梯度"""
+        X = self.X_train
+        l = self.kernel.lengthscale
+        
+        # 平方距离
+        X_sq = np.sum(X ** 2, axis=1, keepdims=True)
+        sq_dist = X_sq + X_sq.T - 2 * X @ X.T
+        
+        # RBF 核的 lengthscale 梯度
+        K = self.kernel(X, X)
+        dK_dl = K * sq_dist / (l ** 3)
+        
+        return dK_dl
 
 
 # ============================================================================
@@ -510,6 +1054,8 @@ class BayesianOptimizer:
     贝叶斯优化器
 
     使用高斯过程作为代理模型，通过采集函数引导搜索。
+    
+    支持边际似然优化自动调整核函数超参数。
 
     使用示例:
     ```python
@@ -517,11 +1063,12 @@ class BayesianOptimizer:
     def objective(x):
         return -(x ** 2).sum()  # 最大化
 
-    # 创建优化器
+    # 创建优化器（自动优化超参数）
     optimizer = BayesianOptimizer(
         dim=10,
         bounds=(-3, 3),
-        acquisition_type='ei'
+        acquisition_type='ei',
+        optimize_hyperparams=True  # 启用超参数优化
     )
 
     # 优化
@@ -540,24 +1087,35 @@ class BayesianOptimizer:
         acquisition_type: str = 'ei',
         ucb_beta: float = 2.0,
         xi: float = 0.01,
-        n_restarts: int = 10
+        n_restarts: int = 10,
+        optimize_hyperparams: bool = True,
+        hyperparam_opt_interval: int = 5,
+        n_restarts_optimizer: int = 5,
+        verbose: bool = False
     ):
         """
         Args:
             dim: 搜索空间维度
             bounds: 每个维度的边界 (low, high)
             kernel_type: 核函数类型 ('rbf', 'matern', 'spectral')
-            kernel_lengthscale: 核长度尺度
-            kernel_variance: 核方差
-            noise_variance: 观测噪声方差
+            kernel_lengthscale: 核长度尺度初始值
+            kernel_variance: 核方差初始值
+            noise_variance: 观测噪声方差初始值
             acquisition_type: 采集函数类型 ('ei', 'ucb', 'pi', 'kg')
             ucb_beta: UCB 的 beta 参数
             xi: EI/PI 的 xi 参数
             n_restarts: 采集函数优化的重启次数
+            optimize_hyperparams: 是否优化超参数
+            hyperparam_opt_interval: 超参数优化间隔（每多少次观测）
+            n_restarts_optimizer: 超参数优化的重启次数
+            verbose: 是否打印详细信息
         """
         self.dim = dim
         self.bounds = bounds
         self.n_restarts = n_restarts
+        self.optimize_hyperparams = optimize_hyperparams
+        self.hyperparam_opt_interval = hyperparam_opt_interval
+        self.verbose = verbose
 
         # 创建核函数
         if kernel_type == 'rbf':
@@ -570,7 +1128,11 @@ class BayesianOptimizer:
             raise ValueError(f"Unknown kernel type: {kernel_type}")
 
         # 创建高斯过程
-        self.gp = GaussianProcessRegressor(self.kernel, noise_variance)
+        self.gp = GaussianProcessRegressor(
+            self.kernel, 
+            noise_variance,
+            n_restarts_optimizer=n_restarts_optimizer
+        )
 
         # 创建采集函数
         if acquisition_type == 'ei':
@@ -587,10 +1149,16 @@ class BayesianOptimizer:
         # 数据存储
         self.X_observed = []
         self.y_observed = []
+        self._observation_count = 0
+        
+        # 超参数历史
+        self.hyperparameter_history = []
 
     def suggest_next(self) -> np.ndarray:
         """
         建议下一个评估点
+        
+        自动执行超参数优化（如果启用）
 
         Returns:
             x_next: 建议的下一个点 [D]
@@ -599,10 +1167,25 @@ class BayesianOptimizer:
             # 数据不足，随机采样
             return self._random_sample()
 
-        # 更新 GP
+        # 更新 GP（根据设置决定是否优化超参数）
         X = np.array(self.X_observed)
         y = np.array(self.y_observed)
-        self.gp.fit(X, y)
+        
+        should_optimize = (
+            self.optimize_hyperparams and 
+            self._observation_count > 0 and
+            self._observation_count % self.hyperparam_opt_interval == 0
+        )
+        
+        self.gp.fit(
+            X, y, 
+            optimize_hyperparams=should_optimize,
+            verbose=self.verbose
+        )
+        
+        # 记录超参数
+        if should_optimize:
+            self._record_hyperparameters()
 
         # 当前最佳值
         y_best = np.max(y)
@@ -622,13 +1205,34 @@ class BayesianOptimizer:
         """
         self.X_observed.append(np.atleast_1d(x).flatten())
         self.y_observed.append(y)
+        self._observation_count += 1
+    
+    def _record_hyperparameters(self):
+        """记录当前超参数"""
+        params = {
+            'observation_count': self._observation_count,
+            'lengthscale': self.kernel.lengthscale,
+            'variance': self.kernel.variance,
+            'noise_variance': self.gp.noise_variance,
+            'log_marginal_likelihood': self.gp._log_marginal_likelihood_value
+        }
+        self.hyperparameter_history.append(params)
+        
+        if self.verbose:
+            print(f"Hyperparameters at observation {self._observation_count}:")
+            print(f"  lengthscale = {self.kernel.lengthscale:.4f}")
+            print(f"  variance = {self.kernel.variance:.4f}")
+            print(f"  noise = {self.gp.noise_variance:.6f}")
+            if self.gp._log_marginal_likelihood_value:
+                print(f"  LML = {self.gp._log_marginal_likelihood_value:.4f}")
 
     def optimize(
         self,
         objective: Callable[[np.ndarray], float],
         n_iterations: int,
         n_initial: int = 5,
-        verbose: bool = True
+        verbose: bool = True,
+        callback: Optional[Callable[[int, np.ndarray, float], None]] = None
     ) -> Tuple[np.ndarray, float]:
         """
         执行贝叶斯优化
@@ -638,6 +1242,7 @@ class BayesianOptimizer:
             n_iterations: 迭代次数
             n_initial: 初始随机采样数
             verbose: 是否打印进度
+            callback: 回调函数，每次迭代后调用 (iteration, x, y)
 
         Returns:
             best_x: 最优点
@@ -662,10 +1267,16 @@ class BayesianOptimizer:
             # 评估
             y_next = objective(x_next)
             self.observe(x_next, y_next)
+            
+            # 回调
+            if callback is not None:
+                callback(i + 1, x_next, y_next)
 
             if verbose and (i + 1) % 10 == 0:
                 best_y = np.max(self.y_observed)
-                print(f"Iteration {i + 1}/{n_iterations}: best_y = {best_y:.6f}")
+                lml = self.gp._log_marginal_likelihood_value
+                lml_str = f", LML = {lml:.2f}" if lml is not None else ""
+                print(f"Iteration {i + 1}/{n_iterations}: best_y = {best_y:.6f}{lml_str}")
 
         # 返回最佳结果
         best_idx = np.argmax(self.y_observed)
@@ -727,7 +1338,26 @@ class BayesianOptimizer:
         """重置优化器"""
         self.X_observed = []
         self.y_observed = []
-        self.gp = GaussianProcessRegressor(self.kernel, self.gp.noise_variance)
+        self._observation_count = 0
+        self.hyperparameter_history = []
+        self.gp = GaussianProcessRegressor(
+            self.kernel, 
+            self.gp.noise_variance,
+            n_restarts_optimizer=self.gp.n_restarts_optimizer
+        )
+    
+    def get_hyperparameter_history(self) -> List[Dict]:
+        """获取超参数优化历史"""
+        return self.hyperparameter_history.copy()
+    
+    def get_current_hyperparameters(self) -> Dict:
+        """获取当前超参数"""
+        return {
+            'lengthscale': self.kernel.lengthscale,
+            'variance': self.kernel.variance,
+            'noise_variance': self.gp.noise_variance,
+            'log_marginal_likelihood': self.gp._log_marginal_likelihood_value
+        }
 
 
 # ============================================================================
@@ -739,6 +1369,7 @@ class GaussianProcessRegressorTorch(nn.Module):
     PyTorch 版本的高斯过程回归
 
     支持端到端梯度计算，可用于神经网络集成。
+    支持边际似然优化自动学习超参数。
     """
 
     def __init__(
@@ -746,10 +1377,12 @@ class GaussianProcessRegressorTorch(nn.Module):
         dim: int,
         lengthscale: float = 1.0,
         variance: float = 1.0,
-        noise_variance: float = 1e-4
+        noise_variance: float = 1e-4,
+        learn_hyperparams: bool = True
     ):
         super().__init__()
         self.dim = dim
+        self.learn_hyperparams = learn_hyperparams
 
         # 可学习参数
         self.log_lengthscale = nn.Parameter(torch.log(torch.tensor(lengthscale)))
@@ -761,6 +1394,7 @@ class GaussianProcessRegressorTorch(nn.Module):
         self.register_buffer('y_train', None)
         self.register_buffer('K_inv', None)
         self.register_buffer('alpha', None)
+        self.register_buffer('L', None)
 
     @property
     def lengthscale(self) -> Tensor:
@@ -786,18 +1420,29 @@ class GaussianProcessRegressorTorch(nn.Module):
 
         return K
 
-    def fit(self, X: Tensor, y: Tensor):
+    def fit(self, X: Tensor, y: Tensor, optimize_steps: int = 0, lr: float = 0.01):
         """训练 GP"""
         self.X_train = X
         self.y_train = y
+
+        # 可选的超参数优化
+        if optimize_steps > 0 and self.learn_hyperparams:
+            optimizer = torch.optim.Adam([self.log_lengthscale, self.log_variance, self.log_noise], lr=lr)
+            
+            for _ in range(optimize_steps):
+                optimizer.zero_grad()
+                lml = self.log_marginal_likelihood()
+                loss = -lml  # 最大化 LML = 最小化负 LML
+                loss.backward()
+                optimizer.step()
 
         # 计算核矩阵
         K = self.rbf_kernel(X, X)
         K = K + self.noise_variance * torch.eye(len(X), device=X.device)
 
         # Cholesky 分解
-        L = torch.linalg.cholesky(K)
-        self.K_inv = torch.cholesky_inverse(L)
+        self.L = torch.linalg.cholesky(K)
+        self.K_inv = torch.cholesky_inverse(self.L)
         self.alpha = self.K_inv @ y
 
     def predict(self, X: Tensor, return_std: bool = True) -> Union[Tensor, Tuple[Tensor, Tensor]]:
@@ -821,3 +1466,85 @@ class GaussianProcessRegressorTorch(nn.Module):
         std = torch.sqrt(torch.clamp(var, min=1e-10))
 
         return mu, std
+    
+    def log_marginal_likelihood(self) -> Tensor:
+        """
+        计算对数边际似然
+        
+        log p(y|X, θ) = -1/2 y^T K^{-1} y - 1/2 log|K| - n/2 log(2π)
+        """
+        if self.X_train is None:
+            return torch.tensor(0.0)
+        
+        n = len(self.y_train)
+        
+        # 计算核矩阵
+        K = self.rbf_kernel(self.X_train, self.X_train)
+        K = K + self.noise_variance * torch.eye(n, device=K.device)
+        
+        # Cholesky 分解
+        try:
+            L = torch.linalg.cholesky(K)
+        except RuntimeError:
+            # 如果矩阵不正定，添加 jitter
+            jitter = 1e-6
+            K = K + jitter * torch.eye(n, device=K.device)
+            L = torch.linalg.cholesky(K)
+        
+        # 计算 alpha = K^{-1} y
+        alpha = torch.cholesky_solve(self.y_train.unsqueeze(-1), L).squeeze(-1)
+        
+        # log|K| = 2 * sum(log(diag(L)))
+        logdet = 2 * torch.sum(torch.log(torch.diag(L)))
+        
+        # LML
+        lml = -0.5 * (self.y_train @ alpha) - 0.5 * logdet - 0.5 * n * torch.log(torch.tensor(2 * np.pi))
+        
+        return lml
+
+
+# ============================================================================
+# 工具函数
+# ============================================================================
+
+def create_gp_with_optimized_hyperparams(
+    X: np.ndarray,
+    y: np.ndarray,
+    kernel_type: str = 'rbf',
+    n_restarts: int = 10,
+    verbose: bool = False
+) -> GaussianProcessRegressor:
+    """
+    创建带有优化超参数的高斯过程
+    
+    便捷函数，自动优化超参数。
+    
+    Args:
+        X: 输入数据
+        y: 目标值
+        kernel_type: 核函数类型
+        n_restarts: 优化重启次数
+        verbose: 是否打印信息
+        
+    Returns:
+        优化后的 GP 模型
+    """
+    # 创建核函数
+    if kernel_type == 'rbf':
+        kernel = RBFKernel(1.0, 1.0)
+    elif kernel_type == 'matern':
+        kernel = MaternKernel(1.0, 1.0, nu=2.5)
+    else:
+        kernel = RBFKernel(1.0, 1.0)
+    
+    # 创建 GP
+    gp = GaussianProcessRegressor(
+        kernel,
+        noise_variance=1e-4,
+        n_restarts_optimizer=n_restarts
+    )
+    
+    # 训练并优化
+    gp.fit(X, y, optimize_hyperparams=True, verbose=verbose)
+    
+    return gp
