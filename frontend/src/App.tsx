@@ -8,6 +8,7 @@ import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 import { Toaster } from 'react-hot-toast';
 import { Header, WorkflowCanvas } from './components';
 import { NodeSidebar, PropertiesPanel } from './components/panels';
+import './App.css'; // 引入样式文件
 
 // 创建暗色主题
 const darkTheme = createTheme({
@@ -71,16 +72,9 @@ const App: React.FC = () => {
           }
         }}
       />
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          height: '100vh',
-          overflow: 'hidden'
-        }}
-      >
+      <div className="app-container">
         <Header />
-        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        <div className="main-content">
           <NodeSidebar />
           <WorkflowCanvas />
           <PropertiesPanel />
