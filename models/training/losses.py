@@ -1717,6 +1717,434 @@ class VAEScheduler:
         self.max_epochs = state_dict['max_epochs']
 
 
+# ============================================================================
+# 物理约束损失函数
+# ============================================================================
+
+class DispersionLoss(nn.Module):
+    """
+    材料色散损失
+    
+    惩罚设计在多个波长下的性能不一致性。
+    """
+    
+    def __init__(
+        self,
+        material: str = "silicon",
+        wavelengths: Optional[List[float]] = None,
+        reference_wavelength: float = 1.55,
+        weight: float = 1.0
+    ):
+        """
+        Args:
+            material: 材料名称
+            wavelengths: 波长列表 (μm)
+            reference_wavelength: 参考波长
+            weight: 损失权重
+        """
+        super().__init__()
+        self.material = material
+        self.reference_wavelength = reference_wavelength
+        self.weight = weight
+        
+        # 默认波长范围（通信波段）
+        if wavelengths is None:
+            wavelengths = [1.30, 1.55, 1.70]
+        self.wavelengths = wavelengths
+        
+        # 材料色散参数
+        self._init_material_params()
+    
+    def _init_material_params(self):
+        """初始化材料 Sellmeier 参数"""
+        # 硅的 Sellmeier 系数
+        if self.material == "silicon":
+            self.register_buffer('sellmeier_B', 
+                torch.tensor([10.6684293, 0.0030434748, 1.54133408]))
+            self.register_buffer('sellmeier_C',
+                torch.tensor([0.301516485, 1.13475115, 1104.0]))
+        elif self.material == "silicon_dioxide":
+            self.register_buffer('sellmeier_B',
+                torch.tensor([0.6961663, 0.4079426, 0.8974794]))
+            self.register_buffer('sellmeier_C',
+                torch.tensor([0.004672, 0.013512, 97.934]))
+        else:
+            # 默认硅氮
+            self.register_buffer('sellmeier_B', torch.tensor([2.8939, 0.0, 0.0]))
+            self.register_buffer('sellmeier_C', torch.tensor([0.01951, 0.0, 0.0]))
+    
+    def _compute_refractive_index(self, wavelength: Tensor) -> Tensor:
+        """计算给定波长下的折射率"""
+        lam_sq = wavelength ** 2
+        n_sq_minus_1 = torch.tensor(0.0, device=wavelength.device)
+        
+        for B, C in zip(self.sellmeier_B, self.sellmeier_C):
+            n_sq_minus_1 = n_sq_minus_1 + B * lam_sq / (lam_sq - C)
+        
+        return torch.sqrt(n_sq_minus_1 + 1)
+    
+    def forward(
+        self,
+        design: Tensor,
+        performance_dict: Optional[Dict[str, Tensor]] = None,
+    ) -> Dict[str, Tensor]:
+        """
+        计算色散损失
+        
+        Args:
+            design: 设计参数 [B, H, W] 或 [B, C, H, W]
+            performance_dict: 各波长的性能字典（可选）
+            
+        Returns:
+            损失字典
+        """
+        # 计算参考波长折射率
+        n_ref = self._compute_refractive_index(
+            torch.tensor(self.reference_wavelength, device=design.device)
+        )
+        
+        losses = {}
+        total_loss = torch.tensor(0.0, device=design.device)
+        
+        # 计算各波长的相位失配
+        for wl in self.wavelengths:
+            if wl == self.reference_wavelength:
+                continue
+            
+            n_wl = self._compute_refractive_index(
+                torch.tensor(wl, device=design.device)
+            )
+            delta_n = (n_wl - n_ref).abs()
+            
+            # 相位失配惩罚
+            phase_mismatch = delta_n * design.mean() * 2 * torch.pi / wl
+            losses[f'phase_mismatch_{wl:.2f}um'] = phase_mismatch
+            total_loss = total_loss + phase_mismatch
+        
+        # 如果有性能数据，计算性能一致性损失
+        if performance_dict is not None:
+            performances = list(performance_dict.values())
+            if len(performances) > 1:
+                perf_stack = torch.stack(performances)
+                perf_std = perf_stack.std()
+                losses['performance_variance'] = perf_std
+                total_loss = total_loss + perf_std
+        
+        losses['dispersion_total'] = total_loss * self.weight
+        
+        return losses
+
+
+class ThermalLoss(nn.Module):
+    """
+    热效应损失
+    
+    惩罚设计对温度变化的敏感性。
+    """
+    
+    def __init__(
+        self,
+        material: str = "silicon",
+        thermo_optic_coeff: float = 1.86e-4,  # K⁻¹
+        temperature_range: Tuple[float, float] = (280.0, 360.0),  # K
+        reference_temperature: float = 300.0,  # K
+        weight: float = 1.0
+    ):
+        """
+        Args:
+            material: 材料名称
+            thermo_optic_coeff: 热光系数
+            temperature_range: 工作温度范围
+            reference_temperature: 参考温度
+            weight: 损失权重
+        """
+        super().__init__()
+        self.material = material
+        self.thermo_optic_coeff = thermo_optic_coeff
+        self.temp_range = temperature_range
+        self.reference_temp = reference_temperature
+        self.weight = weight
+    
+    def forward(
+        self,
+        design: Tensor,
+        temperature_field: Optional[Tensor] = None,
+    ) -> Dict[str, Tensor]:
+        """
+        计算热效应损失
+        
+        Args:
+            design: 设计参数
+            temperature_field: 温度场（可选）
+            
+        Returns:
+            损失字典
+        """
+        # 温度变化范围
+        delta_T_max = self.temp_range[1] - self.reference_temp
+        delta_T_min = self.temp_range[0] - self.reference_temp
+        
+        # 最大折射率变化
+        max_delta_n = self.thermo_optic_coeff * max(abs(delta_T_max), abs(delta_T_min))
+        
+        # 计算热敏感度（边缘敏感度更高）
+        if design.dim() == 4:
+            design = design.squeeze(1)
+        
+        # 计算梯度（边缘检测）
+        if design.dim() == 3:
+            grad_x = (design[:, :, 1:] - design[:, :, :-1]).abs()
+            grad_y = (design[:, 1:, :] - design[:, :-1, :]).abs()
+        else:
+            grad_x = (design[:, 1:] - design[:, :-1]).abs()
+            grad_y = (design[1:, :] - design[:-1, :]).abs()
+        
+        edge_density = (grad_x.mean() + grad_y.mean()) / 2
+        
+        # 热稳定性损失
+        thermal_sensitivity = max_delta_n * edge_density
+        
+        losses = {
+            'thermal_sensitivity': thermal_sensitivity,
+            'edge_density': edge_density,
+            'max_delta_n': torch.tensor(max_delta_n, device=design.device),
+            'thermal_total': thermal_sensitivity * self.weight
+        }
+        
+        # 如果有温度场，计算额外的热约束
+        if temperature_field is not None:
+            temp_violation = F.relu(temperature_field - self.temp_range[1])
+            losses['temperature_violation'] = temp_violation.mean()
+            losses['thermal_total'] = losses['thermal_total'] + temp_violation.mean()
+        
+        return losses
+
+
+class RobustnessLoss(nn.Module):
+    """
+    鲁棒性损失
+    
+    惩罚设计对制造公差的敏感性。
+    """
+    
+    def __init__(
+        self,
+        cd_tolerance: float = 0.01,  # μm
+        edge_roughness_rms: float = 0.003,  # μm
+        resolution: float = 0.01,  # μm/pixel
+        num_mc_samples: int = 5,
+        weight: float = 1.0
+    ):
+        """
+        Args:
+            cd_tolerance: 关键尺寸公差
+            edge_roughness_rms: 边缘粗糙度 RMS
+            resolution: 网格分辨率
+            num_mc_samples: 蒙特卡洛样本数
+            weight: 损失权重
+        """
+        super().__init__()
+        self.cd_tolerance = cd_tolerance
+        self.roughness_rms = edge_roughness_rms
+        self.resolution = resolution
+        self.num_mc_samples = num_mc_samples
+        self.weight = weight
+    
+    def forward(
+        self,
+        design: Tensor,
+        perturbed_samples: Optional[Tensor] = None,
+    ) -> Dict[str, Tensor]:
+        """
+        计算鲁棒性损失
+        
+        Args:
+            design: 设计参数
+            perturbed_samples: 扰动样本（可选）
+            
+        Returns:
+            损失字典
+        """
+        # 确保维度正确
+        if design.dim() == 2:
+            design = design.unsqueeze(0).unsqueeze(0)
+        elif design.dim() == 3:
+            design = design.unsqueeze(0)
+        
+        # Sobel 边缘检测
+        sobel_x = torch.tensor(
+            [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
+            dtype=torch.float32, device=design.device
+        ).view(1, 1, 3, 3)
+        
+        sobel_y = torch.tensor(
+            [[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
+            dtype=torch.float32, device=design.device
+        ).view(1, 1, 3, 3)
+        
+        grad_x = F.conv2d(design, sobel_x, padding=1)
+        grad_y = F.conv2d(design, sobel_y, padding=1)
+        
+        edge_strength = torch.sqrt(grad_x**2 + grad_y**2 + 1e-8)
+        
+        # 边缘周长
+        perimeter = edge_strength.sum()
+        
+        # 边缘密度
+        edge_density = edge_strength.mean()
+        
+        # 鲁棒性指标
+        roughness_factor = self.roughness_rms / self.resolution
+        robustness_penalty = edge_density * roughness_factor
+        
+        losses = {
+            'edge_perimeter': perimeter,
+            'edge_density': edge_density,
+            'robustness_penalty': robustness_penalty,
+            'robustness_total': robustness_penalty * self.weight
+        }
+        
+        # 如果有扰动样本，计算性能方差
+        if perturbed_samples is not None:
+            if perturbed_samples.dim() == 4:
+                # [num_samples, B, H, W] -> 计算方差
+                variance = perturbed_samples.var(dim=0).mean()
+                losses['design_variance'] = variance
+                losses['robustness_total'] = losses['robustness_total'] + variance
+        
+        return losses
+
+
+class PhysicsConstraintLoss(nn.Module):
+    """
+    综合物理约束损失
+    
+    组合色散、热效应和鲁棒性约束。
+    """
+    
+    def __init__(
+        self,
+        material: str = "silicon",
+        # 色散参数
+        wavelengths: Optional[List[float]] = None,
+        reference_wavelength: float = 1.55,
+        dispersion_weight: float = 0.5,
+        # 热效应参数
+        temperature_range: Tuple[float, float] = (280.0, 360.0),
+        thermo_optic_coeff: float = 1.86e-4,
+        thermal_weight: float = 0.5,
+        # 鲁棒性参数
+        cd_tolerance: float = 0.01,
+        edge_roughness_rms: float = 0.003,
+        resolution: float = 0.01,
+        robustness_weight: float = 1.0,
+        # 其他
+        adaptive_weights: bool = False
+    ):
+        """
+        Args:
+            material: 材料名称
+            wavelengths: 波长列表
+            reference_wavelength: 参考波长
+            dispersion_weight: 色散损失权重
+            temperature_range: 温度范围
+            thermo_optic_coeff: 热光系数
+            thermal_weight: 热效应损失权重
+            cd_tolerance: 尺寸公差
+            edge_roughness_rms: 边缘粗糙度
+            resolution: 网格分辨率
+            robustness_weight: 鲁棒性损失权重
+            adaptive_weights: 是否使用自适应权重
+        """
+        super().__init__()
+        
+        self.dispersion_loss = DispersionLoss(
+            material=material,
+            wavelengths=wavelengths,
+            reference_wavelength=reference_wavelength,
+            weight=dispersion_weight
+        )
+        
+        self.thermal_loss = ThermalLoss(
+            material=material,
+            thermo_optic_coeff=thermo_optic_coeff,
+            temperature_range=temperature_range,
+            weight=thermal_weight
+        )
+        
+        self.robustness_loss = RobustnessLoss(
+            cd_tolerance=cd_tolerance,
+            edge_roughness_rms=edge_roughness_rms,
+            resolution=resolution,
+            weight=robustness_weight
+        )
+        
+        self.adaptive_weights = adaptive_weights
+        
+        if adaptive_weights:
+            self.log_weights = nn.ParameterDict({
+                'dispersion': nn.Parameter(torch.tensor(0.0)),
+                'thermal': nn.Parameter(torch.tensor(0.0)),
+                'robustness': nn.Parameter(torch.tensor(0.0))
+            })
+    
+    def forward(
+        self,
+        design: Tensor,
+        performance_dict: Optional[Dict[str, Tensor]] = None,
+        temperature_field: Optional[Tensor] = None,
+        perturbed_samples: Optional[Tensor] = None,
+    ) -> Dict[str, Tensor]:
+        """
+        计算综合物理约束损失
+        
+        Args:
+            design: 设计参数
+            performance_dict: 各波长性能（可选）
+            temperature_field: 温度场（可选）
+            perturbed_samples: 扰动样本（可选）
+            
+        Returns:
+            损失字典
+        """
+        losses = {}
+        
+        # 计算各约束损失
+        disp_losses = self.dispersion_loss(design, performance_dict)
+        therm_losses = self.thermal_loss(design, temperature_field)
+        robust_losses = self.robustness_loss(design, perturbed_samples)
+        
+        # 合并损失
+        for k, v in disp_losses.items():
+            losses[f'dispersion_{k}'] = v
+        for k, v in therm_losses.items():
+            losses[f'thermal_{k}'] = v
+        for k, v in robust_losses.items():
+            losses[f'robustness_{k}'] = v
+        
+        # 计算总损失
+        if self.adaptive_weights:
+            w_disp = torch.exp(-self.log_weights['dispersion'])
+            w_therm = torch.exp(-self.log_weights['thermal'])
+            w_robust = torch.exp(-self.log_weights['robustness'])
+            
+            total = (
+                w_disp * disp_losses['dispersion_total'] +
+                w_therm * therm_losses['thermal_total'] +
+                w_robust * robust_losses['robustness_total']
+            )
+        else:
+            total = (
+                disp_losses['dispersion_total'] +
+                therm_losses['thermal_total'] +
+                robust_losses['robustness_total']
+            )
+        
+        losses['physics_total'] = total
+        
+        return losses
+
+
 # 损失函数工厂
 LOSS_REGISTRY = {
     'mse': nn.MSELoss,
@@ -1744,7 +2172,12 @@ LOSS_REGISTRY = {
     'kl_divergence': KLDivergenceLoss,
     'beta_vae': BetaVAELoss,
     'vae_latent_reg': VAELatentRegularization,
-    'vae_total': VAETotalLoss
+    'vae_total': VAETotalLoss,
+    # 物理约束损失函数
+    'dispersion': DispersionLoss,
+    'thermal': ThermalLoss,
+    'robustness': RobustnessLoss,
+    'physics_constraint': PhysicsConstraintLoss,
 }
 
 

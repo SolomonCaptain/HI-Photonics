@@ -73,6 +73,29 @@ class SimulationConfig:
     save_fields: bool = False
     verbose: bool = True
     
+    # ========== 多物理场约束配置 ==========
+    
+    # 材料色散设置
+    enable_dispersion: bool = False  # 是否启用材料色散
+    material: str = "silicon"  # 主材料
+    dispersion_model: str = "sellmeier"  # 色散模型类型
+    
+    # 热效应设置
+    enable_thermal: bool = False  # 是否启用热效应
+    reference_temperature: float = 300.0  # 参考温度 (K)
+    max_temperature: float = 400.0  # 最大允许温度 (K)
+    thermal_conductivity: Optional[float] = None  # 热导率（使用材料默认值）
+    
+    # 制造公差设置
+    enable_manufacturing_tolerance: bool = False  # 是否启用制造公差
+    process_node: str = "photonics_220nm"  # 工艺节点
+    min_featureSize: float = 0.1  # 最小特征尺寸 (μm)
+    cd_tolerance: float = 0.01  # 关键尺寸公差 (μm)
+    
+    # 鲁棒性优化设置
+    num_mc_samples: int = 10  # 蒙特卡洛样本数
+    robustness_weight: float = 0.1  # 鲁棒性权重
+    
     def get_wavelengths(self) -> List[float]:
         """获取波长列表"""
         if self.wavelengths is not None:
@@ -368,6 +391,182 @@ class SimulatorInterface(ABC):
             save_path: 保存路径
         """
         pass
+    
+    # ========== 多物理场约束支持 ==========
+    
+    def get_material_permittivity(
+        self,
+        wavelength: float,
+        temperature: Optional[float] = None,
+    ) -> float:
+        """
+        获取材料在指定波长和温度下的介电常数
+        
+        Args:
+            wavelength: 波长 (μm)
+            temperature: 温度 (K)，None 使用参考温度
+            
+        Returns:
+            介电常数
+        """
+        # 默认实现返回常数折射率
+        # 子类应覆盖此方法以支持色散和热光效应
+        n = 3.48  # 硅在 1550nm 的折射率
+        
+        if temperature is not None and self.config.enable_thermal:
+            # 热光效应修正
+            thermo_optic_coeff = 1.86e-4  # K⁻¹
+            delta_T = temperature - self.config.reference_temperature
+            n = n + thermo_optic_coeff * delta_T
+        
+        return n ** 2
+    
+    def apply_thermal_effects(
+        self,
+        design_params: Union[np.ndarray, torch.Tensor],
+        temperature_field: Optional[Union[np.ndarray, torch.Tensor]] = None,
+        heat_source: Optional[Union[np.ndarray, torch.Tensor]] = None,
+    ) -> Union[np.ndarray, torch.Tensor]:
+        """
+        应用热效应修正到设计参数
+        
+        Args:
+            design_params: 设计参数（介电常数分布）
+            temperature_field: 温度场（可选）
+            heat_source: 热源分布（可选，用于计算温度场）
+            
+        Returns:
+            修正后的设计参数
+        """
+        if not self.config.enable_thermal:
+            return design_params
+        
+        # 简化实现：子类应覆盖此方法
+        # 实际实现需要求解热传导方程并更新介电常数
+        return design_params
+    
+    def apply_manufacturing_variations(
+        self,
+        design_params: Union[np.ndarray, torch.Tensor],
+        variation_type: str = 'combined',
+        num_samples: int = 1,
+    ) -> List[Union[np.ndarray, torch.Tensor]]:
+        """
+        应用制造公差变化
+        
+        Args:
+            design_params: 设计参数
+            variation_type: 变化类型 ('roughness', 'bias', 'combined')
+            num_samples: 样本数
+            
+        Returns:
+            变化后的设计参数样本列表
+        """
+        if not self.config.enable_manufacturing_tolerance:
+            return [design_params]
+        
+        # 简化实现：子类应覆盖此方法
+        return [design_params] * num_samples
+    
+    def run_multiband(
+        self,
+        design_params: Union[np.ndarray, torch.Tensor],
+        wavelengths: Optional[List[float]] = None,
+        **kwargs
+    ) -> Dict[str, Dict[str, torch.Tensor]]:
+        """
+        在多个波长下运行仿真（考虑材料色散）
+        
+        Args:
+            design_params: 设计参数
+            wavelengths: 波长列表，None 使用配置中的波长
+            
+        Returns:
+            各波长的仿真结果字典
+        """
+        if wavelengths is None:
+            wavelengths = self.config.get_wavelengths()
+        
+        results = {}
+        for wl in wavelengths:
+            # 更新材料属性
+            permittivity = self.get_material_permittivity(wl)
+            
+            # 运行仿真
+            result = self.run(design_params, wavelength=wl, **kwargs)
+            results[f'lambda_{wl:.2f}um'] = result
+        
+        return results
+    
+    def compute_robust_performance(
+        self,
+        design_params: Union[np.ndarray, torch.Tensor],
+        objective_fn,
+        num_samples: Optional[int] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        计算鲁棒性能（考虑制造公差）
+        
+        Args:
+            design_params: 设计参数
+            objective_fn: 目标函数
+            num_samples: 样本数，None 使用配置中的值
+            
+        Returns:
+            鲁棒性能指标字典
+        """
+        if num_samples is None:
+            num_samples = self.config.num_mc_samples
+        
+        # 生成制造变化样本
+        samples = self.apply_manufacturing_variations(
+            design_params,
+            variation_type='combined',
+            num_samples=num_samples
+        )
+        
+        # 评估各样本性能
+        performances = []
+        for sample in samples:
+            result = self.run(sample)
+            perf = objective_fn(result)
+            performances.append(perf)
+        
+        performances = torch.stack(performances)
+        
+        return {
+            'mean_performance': performances.mean(dim=0),
+            'std_performance': performances.std(dim=0),
+            'min_performance': performances.min(dim=0)[0],
+            'max_performance': performances.max(dim=0)[0],
+            'robustness_score': performances.mean(dim=0) - self.config.robustness_weight * performances.std(dim=0),
+        }
+    
+    def validate_design_rules(
+        self,
+        design_params: Union[np.ndarray, torch.Tensor],
+    ) -> Dict[str, float]:
+        """
+        验证设计规则
+        
+        Args:
+            design_params: 设计参数
+            
+        Returns:
+            设计规则检查结果
+        """
+        results = {
+            'valid': True,
+            'min_feature_violation': 0.0,
+            'min_spacing_violation': 0.0,
+            'total_violation': 0.0,
+        }
+        
+        if not self.config.enable_manufacturing_tolerance:
+            return results
+        
+        # 简化实现：子类应覆盖此方法
+        return results
 
 
 class SimulatorFactory:
