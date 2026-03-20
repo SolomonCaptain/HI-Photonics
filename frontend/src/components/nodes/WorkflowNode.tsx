@@ -33,6 +33,7 @@ import {
 import type { NodeInstance } from '../../types';
 import { NodeType } from '../../types';
 import { NODE_DEFINITIONS } from "../../store";
+import '@xyflow/react/dist/style.css';
 
 const iconMap: Record<NodeType, React.ReactElement> = {
     [NodeType.PARAMETERIZATION]: <Tune />,

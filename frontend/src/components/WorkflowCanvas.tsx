@@ -25,6 +25,7 @@ import { Box } from '@mui/material';
 import { WorkflowNode } from './nodes';
 import { useWorkflowStore } from '../store/workflowStore';
 import type { NodeType } from '../types';
+import '@xyflow/react/dist/style.css';
 
 const nodeTypes: NodeTypes = {
     parameterization: WorkflowNode,
