@@ -18,7 +18,6 @@ import {
     IconButton,
     Chip,
     Button,
-    Alert,
     LinearProgress
 } from '@mui/material';
 import {
@@ -31,7 +30,7 @@ import {
     HourglassEmpty
 } from '@mui/icons-material';
 import { useWorkflowStore, NODE_DEFINITIONS } from '../../store/workflowStore';
-import { NodeParameter } from '../../types';
+import type { NodeParameter } from '../../types';
 
 const PropertiesPanel: React.FC = () => {
     const {

@@ -4,7 +4,7 @@
 
 import { useState, useCallback } from 'react';
 import { workflowApi } from '../utils/api';
-import { NodeInstance, NodeConnection } from '../types';
+import type { NodeInstance, NodeConnection } from '../types';
 
 interface ExecutionState {
     isExecuting: boolean;

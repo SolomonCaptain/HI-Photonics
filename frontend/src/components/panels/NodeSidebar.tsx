@@ -38,7 +38,8 @@ import {
     ChevronLeft,
     ChevronRight
 } from '@mui/icons-material';
-import { NodeType, NODE_DEFINITIONS } from '../../types';
+import { NodeType } from '../../types';
+import { NODE_DEFINITIONS } from '../../store/workflowStore';
 import { useWorkflowStore } from '../../store/workflowStore';
 
 const iconMap: Record<NodeType, React.ReactElement> = {
@@ -60,7 +61,7 @@ const categoryOrder = ['设计', '数据', '模型', '仿真', '处理', '优化
 
 const NodeSidebar: React.FC = () => {
     const [searchQuery, setSearchQuery] = useState('');
-    const { addNode, sidebarOpen, setSidebarOpen } = useWorkflowStore;
+    const { addNode, sidebarOpen, setSidebarOpen } = useWorkflowStore();
 
     const groupedNodes = categoryOrder.reduce((acc, category) => {
         const nodes = Object.entries(NODE_DEFINITIONS)

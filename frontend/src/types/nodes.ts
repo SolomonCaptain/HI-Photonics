@@ -3,39 +3,41 @@
  * 对应后端 core/nodes 模块
  */
 
-export enum NodeType {
+export const NodeType = {
     // 参数化节点
-    PARAMETERIZATION = 'parameterization',
+    PARAMETERIZATION: 'parameterization',
 
     // 仿真节点
-    SIMULATION = 'simulation',
+    SIMULATION: 'simulation',
 
     // 目标函数节点
-    OBJECTIVE = 'objective',
+    OBJECTIVE: 'objective',
 
     // 滤波器节点
-    FILTER = 'filter',
+    FILTER: 'filter',
 
     // 投影节点
-    PROJECTION = 'projection',
+    PROJECTION: 'projection',
 
     // 约束节点
-    CONSTRAINT = 'constraint',
+    CONSTRAINT: 'constraint',
 
     // 模型节点
-    MODEL_TRAIN = 'model_train',
-    MODEL_INFER = 'model_infer',
+    MODEL_TRAIN: 'model_train',
+    MODEL_INFER: 'model_infer',
 
     // 数据节点
-    DATA_LOAD = 'data_load',
-    DATA_SAVE = 'data_save',
+    DATA_LOAD: 'data_load',
+    DATA_SAVE: 'data_save',
 
     // 优化节点
-    OPTIMIZER = 'optimizer',
+    OPTIMIZER: 'optimizer',
 
     // 输出节点
-    OUTPUT = 'output',
-}
+    OUTPUT: 'output',
+} as const;
+
+export type NodeType = typeof NodeType[keyof typeof NodeType];
 
 export interface NodePort {
     id: string;

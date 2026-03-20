@@ -3,7 +3,8 @@
  */
 
 import React, { memo } from "react";
-import { Handle, Position, NodeProps } from '@reactflow/core';
+import { Handle, Position } from '@xyflow/react';
+import type { NodeProps } from '@xyflow/react';
 import {
     Box,
     Typography,
@@ -29,7 +30,8 @@ import {
     Psychology,
     Save
 } from '@mui/icons-material';
-import { NodeInstance, NodeType } from '../../types';
+import type { NodeInstance } from '../../types';
+import { NodeType } from '../../types';
 import { NODE_DEFINITIONS } from "../../store";
 
 const iconMap: Record<NodeType, React.ReactElement> = {
@@ -68,7 +70,7 @@ interface WorkflowNodeProps extends NodeProps {
     data: NodeInstance['data'];
 }
 
-const WorkflowNode: React.FC<WorkflowNodeProps> = ({ id, type, data, selected }) => {
+const WorkflowNode: React.FC<WorkflowNodeProps> = ({ type, data, selected }) => {
     const nodeType = type as NodeType;
     const definition = NODE_DEFINITIONS[nodeType];
     const colors = categoryColors[definition?.category || '输出'];

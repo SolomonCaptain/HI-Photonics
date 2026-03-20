@@ -23,7 +23,7 @@ import {
     Settings,
     Help,
     AutoAwesome,
-    Github
+    GitHub
 } from "@mui/icons-material";
 import { useWorkflowStore } from "../store/workflowStore";
 
@@ -141,7 +141,7 @@ const Header: React.FC = () => {
                     target="_blank"
                     sx={{ color: '#64748b' }}
                 >
-                    <Github />
+                    <GitHub />
                 </IconButton>
             </Tooltip>
             <Tooltip title="帮助文档">

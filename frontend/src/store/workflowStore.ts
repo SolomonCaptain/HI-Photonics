@@ -4,12 +4,12 @@
  */
 
 import { create } from 'zustand';
-import {
+import type {
     NodeInstance,
     NodeConnection,
-    NodeType,
     NodeDefinition
 } from '../types';
+import { NodeType } from '../types';
 
 // 节点定义注册表
 export const NODE_DEFINITIONS: Record<NodeType, NodeDefinition> = {
@@ -266,7 +266,7 @@ interface WorkflowState {
 
     // 执行状态
     isExecuting: boolean;
-    executionResult: Record<string, any>;
+    executionResults: Record<string, any>;
 
     // UI 状态
     sidebarOpen: boolean;
@@ -324,7 +324,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
             }
         };
 
-        set(state => ({ node: [...state.nodes, newNode] }));
+        set(state => ({ nodes: [...state.nodes, newNode] }));
     },
 
     removeNode: (id) => {

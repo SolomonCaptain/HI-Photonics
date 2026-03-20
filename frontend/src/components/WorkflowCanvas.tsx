@@ -4,23 +4,27 @@
  */
 
 import React, { useCallback, useRef } from "react";
-import ReactFlow, {
+import {
+    ReactFlow,
     Background,
     Controls,
     MiniMap,
-    Connection,
     addEdge,
     useNodesState,
     useEdgesState,
-    NodeTypes,
     BackgroundVariant,
     ReactFlowProvider,
+    ConnectionLineType
+} from '@xyflow/react';
+import type {
+    Connection,
+    NodeTypes,
     ReactFlowInstance
-} from '@reactflow/core';
+} from '@xyflow/react';
 import { Box } from '@mui/material';
 import { WorkflowNode } from './nodes';
 import { useWorkflowStore } from '../store/workflowStore';
-import { NodeType } from '../types';
+import type { NodeType } from '../types';
 
 const nodeTypes: NodeTypes = {
     parameterization: WorkflowNode,
@@ -39,7 +43,7 @@ const nodeTypes: NodeTypes = {
 
 const WorkflowCanvas: React.FC = () => {
     const reactFlowWrapper = useRef<HTMLDivElement>(null);
-    const [reactFlowInstance, setReactFlowInstance] = React.useState<ReactFlowInstance | null>(null);
+    const [reactFlowInstance, setReactFlowInstance] = React.useState<ReactFlowInstance<any, any> | null>(null);
 
     const {
         nodes,
@@ -47,12 +51,10 @@ const WorkflowCanvas: React.FC = () => {
         addNode,
         addEdge: storeAddEdge,
         updateNodePosition,
-        setSelectedNode,
-        executeAll,
-        isExecuting
+        setSelectedNode
     } = useWorkflowStore();
 
-    const [localNodes, setLocalNodes, onNodesChange] = useNodesState(nodes);
+    const [localNodes, , onNodesChange] = useNodesState(nodes);
     const [localEdges, setLocalEdges, onEdgesChange] = useEdgesState(edges);
 
     // 同步节点变化
@@ -122,7 +124,7 @@ const WorkflowCanvas: React.FC = () => {
                 onInit={setReactFlowInstance}
                 onDrop={onDrop}
                 onDragOver={onDragOver}
-                onPanelClick={onPanelClick}
+                onPaneClick={onPanelClick}
                 nodeTypes={nodeTypes}
                 fitView
                 snapToGrid
@@ -133,7 +135,7 @@ const WorkflowCanvas: React.FC = () => {
                     style: { stroke: '#3b82f6', strokeWidth: 2 }
                 }}
                 connectionLineStyle={{ stroke: '#3b82f6', strokeWidth: 2 }}
-                connectionLineType="smoothstep"
+                connectionLineType={ConnectionLineType.SmoothStep}
             >
                 <Background
                     variant={BackgroundVariant.Dots}
