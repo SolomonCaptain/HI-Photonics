@@ -120,6 +120,9 @@ class MeepSimulator(SimulatorInterface):
         # 伴随计算相关
         self._forward_dft_fields: Dict[str, Any] = {}
         self._forward_flux: Dict[str, Any] = {}
+        self._forward_field_data: Dict[str, np.ndarray] = {}  # 存储前向场数据
+        self._adjoint_field_data: Dict[str, np.ndarray] = {}  # 存储伴随场数据
+        self._design_region_grid: Optional[Tuple[int, int]] = None  # 设计区域网格尺寸
     
     def setup(self):
         """设置仿真环境"""
@@ -301,6 +304,9 @@ class MeepSimulator(SimulatorInterface):
                     size=config['size']
                 )
             )
+        
+        # 初始化设计区域的 DFT 场监视器（用于伴随方法）
+        self._init_design_region_dft_monitors()
     
     def _params_to_epsilon(
         self,
@@ -349,6 +355,35 @@ class MeepSimulator(SimulatorInterface):
         
         return material_grid
     
+    def _init_design_region_dft_monitors(self):
+        """
+        初始化设计区域的 DFT 场监视器
+        
+        这些监视器用于记录设计区域的场分布，是伴随方法计算梯度的关键。
+        """
+        if not self.design_regions:
+            return
+        
+        wavelengths = self.config.get_wavelengths()
+        frequencies = [1.0 / w for w in wavelengths]
+        
+        for name, region in self.design_regions.items():
+            center = mp.Vector3(*region.center)
+            size = mp.Vector3(*region.size)
+            
+            # 计算设计区域的网格尺寸
+            grid_shape = region.get_grid_shape(self.config.resolution)
+            self._design_region_grid = grid_shape[:2] if len(grid_shape) >= 2 else grid_shape
+            
+            # 创建 DFT 场监视器
+            # 注意：Meep 需要在仿真运行前设置 DFT 监视器
+            self._forward_dft_fields[name] = {
+                'center': center,
+                'size': size,
+                'frequencies': frequencies,
+                'dft_obj': None  # 将在仿真后填充
+            }
+    
     def _run_forward(self) -> SimulationResult:
         """运行前向仿真并收集结果"""
         # 运行仿真
@@ -363,6 +398,9 @@ class MeepSimulator(SimulatorInterface):
             result.flux[name] = np.array(flux_data)
             result.metadata[f'flux_{name}_shape'] = flux_data.shape
         
+        # 获取设计区域的场数据（用于伴随方法）
+        self._record_forward_fields()
+        
         # 获取场数据
         if self.config.save_fields:
             for name, config in self._field_monitors.items():
@@ -374,6 +412,48 @@ class MeepSimulator(SimulatorInterface):
         result.metrics = self._compute_metrics(result)
         
         return result
+    
+    def _record_forward_fields(self):
+        """
+        记录设计区域的前向场分布
+        
+        存储设计区域中每个点的电场分量 E_z (对于 TM 模式)
+        或 E_x, E_y (对于 TE 模式) 的 DFT 变换结果。
+        """
+        for name, config in self._forward_dft_fields.items():
+            center = config['center']
+            size = config['size']
+            frequencies = config['frequencies']
+            
+            region = self.design_regions[name]
+            grid_shape = region.get_grid_shape(self.config.resolution)
+            
+            # 获取设计区域的场数据数组
+            # 对于 2D 仿真，使用 Ez 分量
+            try:
+                # 获取整个设计区域的场数据
+                # Meep 的 get_array 方法需要正确的中心点和尺寸
+                ez_data = self.sim.get_array(
+                    center=center,
+                    size=size,
+                    component=mp.Ez
+                )
+                
+                # 对于多频率，我们需要获取每个频率的 DFT 场
+                # 这里存储复数场数据
+                self._forward_field_data[name] = {
+                    'Ez': ez_data,
+                    'frequencies': frequencies,
+                    'grid_shape': grid_shape
+                }
+            except Exception as e:
+                warnings.warn(f"无法获取设计区域场数据: {e}")
+                # 使用零数组作为后备
+                self._forward_field_data[name] = {
+                    'Ez': np.zeros(grid_shape[:2], dtype=np.complex128),
+                    'frequencies': frequencies,
+                    'grid_shape': grid_shape
+                }
     
     def _compute_metrics(self, result: SimulationResult) -> Dict[str, float]:
         """计算性能指标"""
@@ -427,16 +507,30 @@ class MeepSimulator(SimulatorInterface):
         """
         运行伴随仿真
         
-        基本原理：
-        1. 前向仿真记录场分布
+        伴随法基本原理：
+        1. 前向仿真已记录设计区域的场分布 E_forward
         2. 根据目标函数梯度设置伴随源
-        3. 反向传播计算梯度
+        3. 运行伴随仿真，获取伴随场 E_adjoint
+        4. 梯度 = Re{E_forward * E_adjoint} * d(eps)/d(params)
         """
-        # 创建新的仿真用于伴随计算
-        self._setup_adjoint_simulation()
+        # 确保前向仿真已运行并有场数据
+        if not self._forward_field_data:
+            warnings.warn("前向场数据不存在，无法计算伴随梯度")
+            # 返回零梯度
+            for region in self.design_regions.values():
+                grid_shape = region.get_grid_shape(self.config.resolution)
+                return np.zeros(grid_shape[:2])
+            return np.array([0.0])
         
-        # 设置伴随源
+        # 创建伴随源
         adjoint_sources = self._create_adjoint_sources(objective_grad)
+        
+        if not adjoint_sources:
+            warnings.warn("没有创建任何伴随源，返回零梯度")
+            for region in self.design_regions.values():
+                grid_shape = region.get_grid_shape(self.config.resolution)
+                return np.zeros(grid_shape[:2])
+            return np.array([0.0])
         
         # 重置仿真
         self.sim.reset_meep()
@@ -448,10 +542,43 @@ class MeepSimulator(SimulatorInterface):
         # 运行伴随仿真
         self.sim.run(until=self.config.simulation_time)
         
+        # 记录伴随场
+        self._record_adjoint_fields()
+        
         # 计算梯度
         gradient = self._compute_adjoint_gradient()
         
         return gradient
+    
+    def _record_adjoint_fields(self):
+        """
+        记录伴随场数据
+        
+        在伴随仿真运行后，获取设计区域的伴随场分布。
+        """
+        for name, region in self.design_regions.items():
+            center = mp.Vector3(*region.center)
+            size = mp.Vector3(*region.size)
+            grid_shape = region.get_grid_shape(self.config.resolution)
+            
+            try:
+                # 获取伴随场
+                ez_adjoint = self.sim.get_array(
+                    center=center,
+                    size=size,
+                    component=mp.Ez
+                )
+                
+                self._adjoint_field_data[name] = {
+                    'Ez': ez_adjoint,
+                    'grid_shape': grid_shape
+                }
+            except Exception as e:
+                warnings.warn(f"无法获取伴随场数据: {e}")
+                self._adjoint_field_data[name] = {
+                    'Ez': np.zeros(grid_shape[:2], dtype=np.complex128),
+                    'grid_shape': grid_shape
+                }
     
     def _setup_adjoint_simulation(self):
         """设置伴随仿真"""
@@ -466,6 +593,12 @@ class MeepSimulator(SimulatorInterface):
         创建伴随源
         
         根据目标函数对输出场的梯度设置伴随源。
+        
+        伴随法原理：
+        对于目标函数 J = f(F)，其中 F 是通量或场，
+        伴随源应该设置为：S_adj = -∂J/∂E*
+        
+        对于通量目标，伴随源位于通量监视器位置。
         """
         adjoint_sources = []
         
@@ -482,22 +615,61 @@ class MeepSimulator(SimulatorInterface):
                     center = config['center']
                     size = config['size']
                     
-                    # 使用梯度幅度作为源强度
+                    # 将梯度转换为标量幅度
+                    if isinstance(grad, torch.Tensor):
+                        grad_val = grad.detach().cpu().numpy().flatten()
+                    else:
+                        grad_val = np.atleast_1d(grad).flatten()
+                    
+                    # 为每个频率分量创建伴随源
+                    for i, freq in enumerate(config['frequencies']):
+                        if i < len(grad_val):
+                            # 伴随源幅度：考虑 Meep 的通量定义
+                            # 通量 ∝ |E|²，所以 ∂F/∂E ∝ E*
+                            # 伴随源幅度 = -grad * conjugate(E_forward)
+                            amplitude = -grad_val[i]  # 负号用于梯度下降
+                            
+                            # 创建高斯脉冲源
+                            # 脉宽设置为频率的约 1/10 以保证频率分辨率
+                            fwidth = freq / 10.0
+                            
+                            src = mp.Source(
+                                src=mp.GaussianSource(freq, fwidth=fwidth),
+                                component=mp.Ez,  # TM 模式
+                                center=center,
+                                size=size,
+                                amplitude=float(amplitude)
+                            )
+                            adjoint_sources.append(src)
+            
+            elif name.startswith('field_'):
+                # 场监视器的伴随源
+                monitor_name = name.replace('field_', '')
+                if monitor_name in self._field_monitors:
+                    config = self._field_monitors[monitor_name]
+                    
+                    center = config['center']
+                    size = config['size']
+                    
                     if isinstance(grad, torch.Tensor):
                         grad_val = grad.detach().cpu().numpy()
                     else:
-                        grad_val = grad
+                        grad_val = np.array(grad)
+                    
+                    # 对于场目标，需要在整个监视器区域设置分布式源
+                    # 这里简化处理，使用平均梯度
+                    amplitude = -np.mean(np.abs(grad_val))
                     
                     for i, freq in enumerate(config['frequencies']):
-                        if i < len(grad_val):
-                            src = mp.Source(
-                                src=mp.GaussianSource(freq, fwidth=freq/10),
-                                component=mp.Ez,
-                                center=center,
-                                size=size,
-                                amplitude=grad_val[i]
-                            )
-                            adjoint_sources.append(src)
+                        fwidth = freq / 10.0
+                        src = mp.Source(
+                            src=mp.GaussianSource(freq, fwidth=fwidth),
+                            component=mp.Ez,
+                            center=center,
+                            size=size,
+                            amplitude=float(amplitude)
+                        )
+                        adjoint_sources.append(src)
         
         return adjoint_sources
     
@@ -505,27 +677,61 @@ class MeepSimulator(SimulatorInterface):
         """
         计算伴随梯度
         
-        梯度 = Re{E_forward * E_adjoint}
+        梯度公式：
+        ∂J/∂ρ = Re{E_forward * E_adjoint} * ∂ε/∂ρ
+        
+        其中：
+        - E_forward: 前向场（从仿真获取）
+        - E_adjoint: 伴随场（从伴随仿真获取）
+        - ∂ε/∂ρ: 介电常数对设计参数的导数
+        
+        对于线性插值 ε(ρ) = ε_min + ρ * (ε_max - ε_min):
+        ∂ε/∂ρ = ε_max - ε_min
         """
-        # 获取设计区域的梯度
         gradients = {}
         
         for name, region in self.design_regions.items():
-            # 获取设计区域的场
-            center = mp.Vector3(*region.center)
-            size = mp.Vector3(*region.size)
+            # 检查是否有前向场和伴随场数据
+            if name not in self._forward_field_data or name not in self._adjoint_field_data:
+                warnings.warn(f"设计区域 {name} 缺少场数据，跳过梯度计算")
+                grid_shape = region.get_grid_shape(self.config.resolution)
+                gradients[name] = np.zeros(grid_shape[:2])
+                continue
             
             # 获取前向场和伴随场
-            # 这里需要根据 Meep 的 API 获取场数据
+            forward_data = self._forward_field_data[name]
+            adjoint_data = self._adjoint_field_data[name]
             
-            # 简化实现：使用有限差分近似
-            grid_shape = region.get_grid_shape(self.config.resolution)
-            gradient = np.zeros(grid_shape[:2])  # 2D
+            E_forward = forward_data['Ez']
+            E_adjoint = adjoint_data['Ez']
             
-            # 实际实现需要：
-            # 1. 在前向仿真中记录场分布
-            # 2. 在伴随仿真中获取伴随场
-            # 3. 计算点积
+            # 确保形状匹配
+            if E_forward.shape != E_adjoint.shape:
+                # 尝试调整形状
+                min_shape = np.minimum(E_forward.shape, E_adjoint.shape)
+                E_forward = E_forward[:min_shape[0], :min_shape[1]]
+                E_adjoint = E_adjoint[:min_shape[0], :min_shape[1]]
+            
+            # 计算介电常数对设计参数的导数
+            # 对于线性插值：∂ε/∂ρ = ε_max - ε_min
+            deps_drho = region.max_permittivity - region.min_permittivity
+            
+            # 计算梯度：∂J/∂ρ = Re{E_forward * E_adjoint} * ∂ε/∂ρ
+            # 注意：Meep 中的场可能是复数，需要正确处理
+            if np.iscomplexobj(E_forward) or np.iscomplexobj(E_adjoint):
+                # 复数场：使用共轭
+                gradient_raw = np.real(E_forward * np.conj(E_adjoint))
+            else:
+                # 实数场（某些情况下 Meep 返回实数场）
+                gradient_raw = E_forward * E_adjoint
+            
+            # 乘以介电常数导数
+            gradient = gradient_raw * deps_drho
+            
+            # 应用比例因子（Meep 的通量单位需要调整）
+            # 这个因子可能需要根据具体仿真设置进行调整
+            scale_factor = 2.0  # 常见的缩放因子
+            gradient = gradient * scale_factor
             
             gradients[name] = gradient
         

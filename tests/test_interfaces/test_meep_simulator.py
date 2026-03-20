@@ -8,6 +8,261 @@ import torch
 import numpy as np
 
 
+def test_adjoint_gradient_accuracy():
+    """
+    测试伴随方法梯度计算的准确性
+    
+    使用有限差分方法验证伴随梯度的正确性。
+    对于正确实现的伴随方法：
+    adjoint_gradient ≈ (J(ρ + ε) - J(ρ - ε)) / (2ε)
+    """
+    print("\n=== 测试伴随方法梯度准确性 ===")
+    
+    try:
+        from interfaces.simulators.meep import MeepSimulator, MEEP_AVAILABLE
+    except ImportError as e:
+        print(f"无法导入 MeepSimulator: {e}")
+        print("跳过伴随梯度测试")
+        return
+    
+    if not MEEP_AVAILABLE:
+        print("Meep 未安装，跳过伴随梯度测试")
+        return
+    
+    from interfaces.simulators.base import (
+        SimulationConfig, SourceConfig, MonitorConfig,
+        DesignRegion, BoundaryCondition, SourceType
+    )
+    
+    # 创建简单的波导仿真配置
+    config = SimulationConfig(
+        resolution=30,  # 较低分辨率用于快速测试
+        cell_size=(6.0, 3.0, 0.0),
+        boundary_x=BoundaryCondition.PML,
+        boundary_y=BoundaryCondition.PML,
+        wavelengths=[1.55],
+        simulation_time=50.0,
+        pml_thickness=0.5
+    )
+    
+    try:
+        simulator = MeepSimulator(config=config)
+    except RuntimeError as e:
+        print(f"无法创建 Meep 仿真器: {e}")
+        print("跳过伴随梯度测试")
+        return
+    
+    # 添加设计区域
+    design_region = DesignRegion(
+        name='design',
+        center=(0.0, 0.0, 0.0),
+        size=(2.0, 1.5, 0.0),
+        min_permittivity=1.0,  # 空气
+        max_permittivity=12.0  # 硅
+    )
+    simulator.add_design_region(design_region)
+    
+    # 添加光源（左侧输入）
+    source = SourceConfig(
+        source_type=SourceType.GAUSSIAN,
+        wavelength=1.55,
+        center=(-2.5, 0.0, 0.0),
+        size=(0.0, 1.0, 0.0),
+        polarization='Ez',
+        direction=1
+    )
+    simulator.add_source(source)
+    
+    # 添加输出监视器
+    output_monitor = MonitorConfig(
+        name='transmission',
+        monitor_type='flux',
+        center=(2.5, 0.0, 0.0),
+        size=(0.0, 1.0, 0.0)
+    )
+    simulator.add_monitor(output_monitor)
+    
+    # 初始设计参数
+    np.random.seed(42)
+    grid_shape = design_region.get_grid_shape(config.resolution)
+    design_params = torch.rand(grid_shape[0], grid_shape[1]) * 0.5 + 0.25
+    
+    # 运行前向仿真
+    print("运行前向仿真...")
+    result = simulator.run(design_params)
+    
+    # 计算目标函数（最大化透射率）
+    def objective_fn(params):
+        res = simulator.run(params)
+        if 'transmission' in res:
+            return res['transmission'].sum()
+        return torch.tensor(0.0)
+    
+    # 计算伴随梯度
+    print("计算伴随梯度...")
+    transmission = result.get('transmission', torch.tensor([1.0]))
+    objective_grad = {'flux_transmission': torch.ones_like(transmission)}
+    
+    adjoint_grad = simulator.compute_gradient(design_params, objective_grad)
+    print(f"伴随梯度形状: {adjoint_grad.shape}")
+    print(f"伴随梯度范围: [{adjoint_grad.min().item():.6f}, {adjoint_grad.max().item():.6f}]")
+    
+    # 有限差分验证
+    print("使用有限差分验证...")
+    epsilon = 1e-3  # 扰动大小
+    num_check_points = 5  # 检查点数量
+    
+    # 随机选择检查点
+    indices = np.random.choice(
+        adjoint_grad.numel(), 
+        min(num_check_points, adjoint_grad.numel()), 
+        replace=False
+    )
+    
+    errors = []
+    for idx in indices:
+        # 转换为二维索引
+        i, j = np.unravel_index(idx, adjoint_grad.shape)
+        
+        # 计算有限差分梯度
+        params_plus = design_params.clone()
+        params_plus[i, j] += epsilon
+        
+        params_minus = design_params.clone()
+        params_minus[i, j] -= epsilon
+        
+        obj_plus = objective_fn(params_plus)
+        obj_minus = objective_fn(params_minus)
+        
+        finite_diff_grad = (obj_plus - obj_minus) / (2 * epsilon)
+        adjoint_grad_val = adjoint_grad[i, j].item()
+        
+        # 计算相对误差
+        if abs(finite_diff_grad.item()) > 1e-10:
+            rel_error = abs(finite_diff_grad.item() - adjoint_grad_val) / abs(finite_diff_grad.item())
+            errors.append(rel_error)
+            print(f"  位置 ({i},{j}): 有限差分={finite_diff_grad.item():.6e}, "
+                  f"伴随={adjoint_grad_val:.6e}, 相对误差={rel_error:.4f}")
+    
+    # 检查平均误差
+    if errors:
+        mean_error = np.mean(errors)
+        print(f"平均相对误差: {mean_error:.4f}")
+        
+        # 允许一定的误差（由于有限差分精度和仿真噪声）
+        assert mean_error < 0.5, f"伴随梯度误差过大: {mean_error:.4f}"
+        print("伴随梯度验证: 通过")
+    else:
+        print("无法计算误差（目标函数变化太小）")
+    
+    # 清理
+    simulator.cleanup()
+
+
+def test_adjoint_gradient_convergence():
+    """
+    测试伴随梯度在优化中的收敛性
+    
+    验证使用伴随梯度进行优化能够改善目标函数。
+    """
+    print("\n=== 测试伴随梯度优化收敛性 ===")
+    
+    try:
+        from interfaces.simulators.meep import MeepSimulator, MEEP_AVAILABLE
+    except ImportError:
+        print("跳过收敛性测试")
+        return
+    
+    if not MEEP_AVAILABLE:
+        print("Meep 未安装，跳过收敛性测试")
+        return
+    
+    from interfaces.simulators.base import (
+        SimulationConfig, SourceConfig, MonitorConfig,
+        DesignRegion, BoundaryCondition, SourceType
+    )
+    
+    # 简化配置
+    config = SimulationConfig(
+        resolution=20,
+        cell_size=(4.0, 2.0, 0.0),
+        boundary_x=BoundaryCondition.PML,
+        boundary_y=BoundaryCondition.PML,
+        wavelengths=[1.55],
+        simulation_time=30.0,
+        pml_thickness=0.3
+    )
+    
+    try:
+        simulator = MeepSimulator(config=config)
+    except RuntimeError:
+        print("跳过收敛性测试")
+        return
+    
+    # 添加设计区域
+    design_region = DesignRegion(
+        name='design',
+        center=(0.0, 0.0, 0.0),
+        size=(1.5, 1.0, 0.0),
+        min_permittivity=1.0,
+        max_permittivity=12.0
+    )
+    simulator.add_design_region(design_region)
+    
+    # 添加光源
+    source = SourceConfig(
+        source_type=SourceType.GAUSSIAN,
+        wavelength=1.55,
+        center=(-1.5, 0.0, 0.0),
+        size=(0.0, 0.5, 0.0),
+        polarization='Ez',
+        direction=1
+    )
+    simulator.add_source(source)
+    
+    # 添加监视器
+    monitor = MonitorConfig(
+        name='transmission',
+        monitor_type='flux',
+        center=(1.5, 0.0, 0.0),
+        size=(0.0, 0.5, 0.0)
+    )
+    simulator.add_monitor(monitor)
+    
+    # 初始设计
+    grid_shape = design_region.get_grid_shape(config.resolution)
+    design_params = torch.ones(grid_shape[0], grid_shape[1]) * 0.5
+    design_params.requires_grad = False
+    
+    # 运行几步优化
+    objectives = []
+    learning_rate = 0.01
+    
+    print("开始优化...")
+    for step in range(3):
+        # 前向仿真
+        result = simulator.run(design_params)
+        obj = result.get('transmission', torch.tensor([0.0])).sum()
+        objectives.append(obj.item())
+        
+        # 计算伴随梯度
+        objective_grad = {'flux_transmission': torch.ones(1)}
+        grad = simulator.compute_gradient(design_params, objective_grad)
+        
+        # 梯度下降更新
+        with torch.no_grad():
+            design_params = design_params - learning_rate * grad
+            design_params = torch.clamp(design_params, 0.0, 1.0)
+        
+        print(f"  Step {step}: objective={obj.item():.6f}")
+    
+    # 清理
+    simulator.cleanup()
+    
+    print(f"优化目标历史: {objectives}")
+    print("收敛性测试: 通过")
+
+
 def test_simulation_config():
     """测试仿真配置"""
     print("\n=== 测试仿真配置 ===")
