@@ -2145,6 +2145,587 @@ class PhysicsConstraintLoss(nn.Module):
         return losses
 
 
+# ============================================================================
+# TNN 专用损失函数 - 解决"平均设计"问题
+# ============================================================================
+
+class InverseContrastiveLoss(nn.Module):
+    """
+    逆向设计对比学习损失
+    
+    解决 TNN 的"平均设计"问题：
+    - 同一目标性能的不同设计应该彼此远离（避免平均化）
+    - 相似目标性能的设计应该在潜在空间中形成有意义的结构
+    
+    核心思想：
+    1. 正样本对：不同目标性能 -> 设计应该不同
+    2. 负样本对：相同目标性能 -> 设计应该多样化（不聚集到均值）
+    3. 特征对比：在逆向网络的潜在空间中进行对比学习
+    """
+    
+    def __init__(
+        self,
+        temperature: float = 0.1,
+        hard_negative_weight: float = 0.5,
+        design_diversity_weight: float = 1.0,
+        feature_dim: Optional[int] = None
+    ):
+        """
+        Args:
+            temperature: 温度参数，控制对比损失的锐度
+            hard_negative_weight: 困难负样本权重
+            design_diversity_weight: 设计多样性权重
+            feature_dim: 特征维度（用于投影头）
+        """
+        super().__init__()
+        self.temperature = temperature
+        self.hard_negative_weight = hard_negative_weight
+        self.design_diversity_weight = design_diversity_weight
+        
+        # 可选的投影头（将设计投影到对比空间）
+        self.projection_head = None
+        if feature_dim is not None:
+            self.projection_head = nn.Sequential(
+                nn.Linear(feature_dim, feature_dim),
+                nn.ReLU(),
+                nn.Linear(feature_dim, feature_dim // 2)
+            )
+    
+    def forward(
+        self,
+        designs: Tensor,
+        target_performances: Tensor,
+        design_features: Optional[Tensor] = None
+    ) -> Dict[str, Tensor]:
+        """
+        计算对比学习损失
+        
+        Args:
+            designs: 生成的设计 [B, H, W] 或 [B, D]
+            target_performances: 目标性能 [B, P]
+            design_features: 设计特征（来自逆向网络中间层）[B, F]
+            
+        Returns:
+            损失字典
+        """
+        batch_size = designs.size(0)
+        
+        # 展平设计
+        designs_flat = designs.view(batch_size, -1)
+        
+        # 使用特征或原始设计
+        if design_features is not None:
+            features = design_features
+            if self.projection_head is not None:
+                features = self.projection_head(features)
+        else:
+            features = designs_flat
+        
+        # 归一化特征
+        features = F.normalize(features, dim=1)
+        
+        # 计算性能相似度矩阵
+        perf_normalized = F.normalize(target_performances, dim=1)
+        perf_similarity = torch.mm(perf_normalized, perf_normalized.t())  # [B, B]
+        
+        # 计算设计相似度矩阵
+        design_similarity = torch.mm(features, features.t())  # [B, B]
+        
+        # 创建掩码：区分正负样本
+        # 正样本：性能相似度高
+        # 负样本：性能相似度低
+        positive_mask = (perf_similarity > 0.9).float()  # 性能非常相似
+        negative_mask = (perf_similarity < 0.5).float()   # 性能差异较大
+        
+        # 移除对角线（自身）
+        identity_mask = torch.eye(batch_size, device=designs.device)
+        positive_mask = positive_mask * (1 - identity_mask)
+        negative_mask = negative_mask * (1 - identity_mask)
+        
+        # ========== 核心对比损失 ==========
+        # 对于相同目标性能，设计应该多样化（避免聚集到均值）
+        design_diversity_loss = torch.tensor(0.0, device=designs.device)
+        if positive_mask.sum() > 0:
+            # 正样本对的设计相似度应该低（多样性）
+            pos_design_sim = design_similarity * positive_mask
+            design_diversity_loss = pos_design_sim.sum() / (positive_mask.sum() + 1e-8)
+        
+        # 对于不同目标性能，设计应该有明显差异
+        performance_distinction_loss = torch.tensor(0.0, device=designs.device)
+        if negative_mask.sum() > 0:
+            # 负样本对的设计相似度可以稍高，但不能太高
+            neg_design_sim = design_similarity * negative_mask
+            # 使用 hinge loss: max(0, sim - margin)
+            margin = 0.3
+            performance_distinction_loss = F.relu(neg_design_sim - margin).sum() / (negative_mask.sum() + 1e-8)
+        
+        # ========== InfoNCE 风格损失 ==========
+        # 将每个样本作为 anchor，找正负样本
+        infonce_loss = torch.tensor(0.0, device=designs.device)
+        if batch_size > 1:
+            # 使用性能相似度作为正负样本的软标签
+            logits = design_similarity / self.temperature
+            
+            # 创建目标分布：相似性能应该有相似的设计
+            target_distribution = F.softmax(perf_similarity / self.temperature, dim=1)
+            
+            # 交叉熵损失
+            log_probs = F.log_softmax(logits, dim=1)
+            infonce_loss = -(target_distribution * log_probs).sum(dim=1).mean()
+        
+        # ========== 总损失 ==========
+        total_loss = (
+            self.design_diversity_weight * design_diversity_loss +
+            0.5 * performance_distinction_loss +
+            0.5 * infonce_loss
+        )
+        
+        return {
+            'design_diversity': design_diversity_loss,
+            'performance_distinction': performance_distinction_loss,
+            'infonce': infonce_loss,
+            'contrastive_total': total_loss
+        }
+
+
+class DesignSharpnessLoss(nn.Module):
+    """
+    设计锐度损失
+    
+    惩罚"模糊"的平均设计，鼓励生成清晰、二值化的设计。
+    
+    原理：
+    - 平均设计通常在每个位置都是 0.5 左右的值
+    - 好的设计应该在边界处有锐利的过渡
+    - 使用梯度强度和二值化程度来衡量锐度
+    """
+    
+    def __init__(
+        self,
+        sharpness_weight: float = 1.0,
+        binary_weight: float = 0.5,
+        edge_weight: float = 0.3,
+        target_sharpness: float = 0.8
+    ):
+        """
+        Args:
+            sharpness_weight: 锐度损失权重
+            binary_weight: 二值化损失权重
+            edge_weight: 边缘清晰度权重
+            target_sharpness: 目标锐度值
+        """
+        super().__init__()
+        self.sharpness_weight = sharpness_weight
+        self.binary_weight = binary_weight
+        self.edge_weight = edge_weight
+        self.target_sharpness = target_sharpness
+    
+    def forward(self, designs: Tensor) -> Dict[str, Tensor]:
+        """
+        计算设计锐度损失
+        
+        Args:
+            designs: 设计参数 [B, H, W]
+            
+        Returns:
+            损失字典
+        """
+        if designs.dim() == 2:
+            designs = designs.unsqueeze(0)
+        
+        batch_size = designs.size(0)
+        
+        # ========== 二值化程度 ==========
+        # 好的设计应该接近 0 或 1，而不是中间值
+        # 使用熵来衡量：entropy = -p*log(p) - (1-p)*log(1-p)
+        # 最大熵在 p=0.5，最小熵在 p=0 或 p=1
+        p = torch.clamp(designs, min=1e-7, max=1 - 1e-7)
+        entropy = -p * torch.log(p) - (1 - p) * torch.log(1 - p)
+        max_entropy = -0.5 * torch.log(torch.tensor(0.5)) - 0.5 * torch.log(torch.tensor(0.5))
+        normalized_entropy = entropy / max_entropy  # 归一化到 [0, 1]
+        
+        # 二值化损失：熵越高（越接近 0.5），惩罚越大
+        binary_loss = normalized_entropy.mean()
+        
+        # ========== 梯度强度（锐度） ==========
+        # 清晰的设计应该有强的梯度
+        grad_x = torch.abs(designs[:, :, 1:] - designs[:, :, :-1])
+        grad_y = torch.abs(designs[:, 1:, :] - designs[:, :-1, :])
+        
+        grad_magnitude = torch.sqrt(grad_x[:, :, :-1].pow(2) + grad_y[:, :-1, :].pow(2) + 1e-8)
+        avg_grad = grad_magnitude.mean()
+        
+        # 锐度损失：梯度应该足够强
+        sharpness_loss = F.relu(self.target_sharpness - avg_grad)
+        
+        # ========== 边缘清晰度 ==========
+        # 使用 Sobel 算子检测边缘
+        sobel_x = torch.tensor(
+            [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
+            dtype=torch.float32, device=designs.device
+        ).view(1, 1, 3, 3)
+        
+        sobel_y = torch.tensor(
+            [[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
+            dtype=torch.float32, device=designs.device
+        ).view(1, 1, 3, 3)
+        
+        designs_4d = designs.unsqueeze(1)  # [B, 1, H, W]
+        edge_x = F.conv2d(designs_4d, sobel_x, padding=1)
+        edge_y = F.conv2d(designs_4d, sobel_y, padding=1)
+        edge_strength = torch.sqrt(edge_x.pow(2) + edge_y.pow(2) + 1e-8)
+        
+        # 边缘应该集中而不是分散
+        edge_concentration = edge_strength.std()  # 边缘强度方差大意味着有清晰的边界
+        edge_loss = -edge_concentration  # 最大化方差
+        
+        # ========== 总损失 ==========
+        total_loss = (
+            self.sharpness_weight * sharpness_loss +
+            self.binary_weight * binary_loss +
+            self.edge_weight * edge_loss
+        )
+        
+        return {
+            'sharpness': sharpness_loss,
+            'binary': binary_loss,
+            'edge_clarity': edge_loss,
+            'avg_gradient': avg_grad,
+            'sharpness_total': total_loss
+        }
+
+
+class DiversityPreservingLoss(nn.Module):
+    """
+    多样性保持损失
+    
+    在训练过程中保持设计空间的多样性，避免所有设计塌缩到均值。
+    
+    方法：
+    1. 批次内多样性：同一批次的设计应该彼此不同
+    2. 时间多样性：同一目标性能在不同训练步应该产生不同的设计
+    3. 模式覆盖：确保覆盖设计空间的不同区域
+    """
+    
+    def __init__(
+        self,
+        batch_diversity_weight: float = 1.0,
+        mode_coverage_weight: float = 0.5,
+        num_modes: int = 4,
+        temperature: float = 1.0
+    ):
+        """
+        Args:
+            batch_diversity_weight: 批次多样性权重
+            mode_coverage_weight: 模式覆盖权重
+            num_modes: 模式数量（设计空间的区域数）
+            temperature: 温度参数
+        """
+        super().__init__()
+        self.batch_diversity_weight = batch_diversity_weight
+        self.mode_coverage_weight = mode_coverage_weight
+        self.num_modes = num_modes
+        self.temperature = temperature
+        
+        # 可学习的模式中心
+        self.mode_centers = None
+        self.initialized = False
+    
+    def _init_mode_centers(self, designs: Tensor):
+        """初始化模式中心"""
+        if self.mode_centers is None or self.mode_centers.size(0) != self.num_modes:
+            # 使用 K-means 风格初始化
+            designs_flat = designs.view(designs.size(0), -1)
+            indices = torch.randperm(designs_flat.size(0))[:self.num_modes]
+            self.mode_centers = nn.Parameter(designs_flat[indices].clone())
+            self.initialized = True
+    
+    def forward(
+        self,
+        designs: Tensor,
+        update_centers: bool = True
+    ) -> Dict[str, Tensor]:
+        """
+        计算多样性保持损失
+        
+        Args:
+            designs: 设计参数 [B, H, W]
+            update_centers: 是否更新模式中心
+            
+        Returns:
+            损失字典
+        """
+        batch_size = designs.size(0)
+        designs_flat = designs.view(batch_size, -1)
+        
+        # 初始化模式中心
+        if not self.initialized:
+            self._init_mode_centers(designs)
+        
+        # ========== 批次内多样性 ==========
+        # 计算批次内设计两两距离
+        dist_matrix = torch.cdist(designs_flat, designs_flat, p=2)
+        
+        # 移除对角线
+        mask = 1 - torch.eye(batch_size, device=designs.device)
+        dist_matrix = dist_matrix * mask
+        
+        # 多样性损失：最小化平均距离的负值（最大化平均距离）
+        avg_dist = dist_matrix.sum() / (mask.sum() + 1e-8)
+        batch_diversity_loss = -avg_dist
+        
+        # ========== 模式覆盖损失 ==========
+        # 设计应该均匀分布到各个模式
+        mode_coverage_loss = torch.tensor(0.0, device=designs.device)
+        
+        if self.mode_centers is not None:
+            # 计算每个设计到各模式中心的距离
+            centers = self.mode_centers.to(designs.device)
+            center_dists = torch.cdist(designs_flat, centers, p=2)  # [B, num_modes]
+            
+            # 软分配：设计属于各模式的概率
+            mode_probs = F.softmax(-center_dists / self.temperature, dim=1)  # [B, num_modes]
+            
+            # 模式使用率：各模式被分配的设计比例
+            mode_usage = mode_probs.sum(dim=0) / batch_size  # [num_modes]
+            
+            # 理想情况：均匀使用各模式
+            target_usage = torch.ones(self.num_modes, device=designs.device) / self.num_modes
+            
+            # KL 散度作为模式覆盖损失
+            mode_coverage_loss = F.kl_div(
+                torch.log(mode_usage + 1e-8),
+                target_usage,
+                reduction='sum'
+            )
+            
+            # 更新模式中心（移动平均）
+            if update_centers and self.training:
+                with torch.no_grad():
+                    # 每个模式的加权平均
+                    for i in range(self.num_modes):
+                        weights = mode_probs[:, i].unsqueeze(1)
+                        new_center = (weights * designs_flat).sum(dim=0) / (weights.sum() + 1e-8)
+                        # 移动平均更新
+                        self.mode_centers.data[i] = 0.9 * self.mode_centers.data[i] + 0.1 * new_center.to(self.mode_centers.device)
+        
+        # ========== 总损失 ==========
+        total_loss = (
+            self.batch_diversity_weight * batch_diversity_loss +
+            self.mode_coverage_weight * mode_coverage_loss
+        )
+        
+        return {
+            'batch_diversity': batch_diversity_loss,
+            'avg_distance': avg_dist,
+            'mode_coverage': mode_coverage_loss,
+            'diversity_total': total_loss
+        }
+
+
+class TNNAntiAverageLoss(nn.Module):
+    """
+    TNN 反平均损失
+    
+    专门针对 TNN 逆向设计的"平均设计"问题的综合损失函数。
+    
+    问题分析：
+    1. 一对多映射：同一性能可能有多个不同的设计
+    2. MSE 损失倾向于让所有设计收敛到均值
+    3. 缺乏对设计多样性的明确约束
+    
+    解决方案：
+    1. 对比学习：让设计形成有意义的结构
+    2. 锐度约束：鼓励清晰的设计
+    3. 多样性保持：避免塌缩
+    """
+    
+    def __init__(
+        self,
+        contrastive_weight: float = 1.0,
+        sharpness_weight: float = 0.5,
+        diversity_weight: float = 0.3,
+        temperature: float = 0.1,
+        target_sharpness: float = 0.8,
+        num_modes: int = 4
+    ):
+        """
+        Args:
+            contrastive_weight: 对比学习损失权重
+            sharpness_weight: 锐度损失权重
+            diversity_weight: 多样性损失权重
+            temperature: 对比学习温度
+            target_sharpness: 目标锐度
+            num_modes: 模式数量
+        """
+        super().__init__()
+        
+        self.contrastive_weight = contrastive_weight
+        self.sharpness_weight = sharpness_weight
+        self.diversity_weight = diversity_weight
+        
+        self.contrastive_loss = InverseContrastiveLoss(temperature=temperature)
+        self.sharpness_loss = DesignSharpnessLoss(target_sharpness=target_sharpness)
+        self.diversity_loss = DiversityPreservingLoss(num_modes=num_modes)
+    
+    def forward(
+        self,
+        designs: Tensor,
+        target_performances: Tensor,
+        design_features: Optional[Tensor] = None
+    ) -> Dict[str, Tensor]:
+        """
+        计算反平均损失
+        
+        Args:
+            designs: 生成的设计 [B, H, W]
+            target_performances: 目标性能 [B, P]
+            design_features: 设计特征（可选）
+            
+        Returns:
+            损失字典
+        """
+        losses = {}
+        
+        # 对比学习损失
+        if self.contrastive_weight > 0:
+            contrastive = self.contrastive_loss(designs, target_performances, design_features)
+            for k, v in contrastive.items():
+                losses[f'contrastive_{k}'] = v
+        
+        # 锐度损失
+        if self.sharpness_weight > 0:
+            sharpness = self.sharpness_loss(designs)
+            for k, v in sharpness.items():
+                losses[f'sharpness_{k}'] = v
+        
+        # 多样性损失
+        if self.diversity_weight > 0:
+            diversity = self.diversity_loss(designs)
+            for k, v in diversity.items():
+                losses[f'diversity_{k}'] = v
+        
+        # 总损失
+        total = torch.tensor(0.0, device=designs.device)
+        
+        if self.contrastive_weight > 0:
+            total = total + self.contrastive_weight * losses['contrastive_contrastive_total']
+        if self.sharpness_weight > 0:
+            total = total + self.sharpness_weight * losses['sharpness_sharpness_total']
+        if self.diversity_weight > 0:
+            total = total + self.diversity_weight * losses['diversity_diversity_total']
+        
+        losses['anti_average_total'] = total
+        
+        return losses
+
+
+class OptimalDesignGuidanceLoss(nn.Module):
+    """
+    最优设计引导损失
+    
+    引导逆向网络学习生成"最优"设计，而不仅仅是"满足性能"的设计。
+    
+    核心思想：
+    1. 高性能区域引导：让设计向高透射率区域集中
+    2. 物理合理性：确保设计满足物理约束
+    3. 多目标平衡：在多个性能指标间找到平衡
+    """
+    
+    def __init__(
+        self,
+        performance_weight: float = 1.0,
+        physical_weight: float = 0.5,
+        smoothness_weight: float = 0.1,
+        min_feature_size: float = 0.1
+    ):
+        """
+        Args:
+            performance_weight: 性能引导权重
+            physical_weight: 物理约束权重
+            smoothness_weight: 平滑度权重
+            min_feature_size: 最小特征尺寸
+        """
+        super().__init__()
+        self.performance_weight = performance_weight
+        self.physical_weight = physical_weight
+        self.smoothness_weight = smoothness_weight
+        self.min_feature_size = min_feature_size
+    
+    def forward(
+        self,
+        designs: Tensor,
+        predicted_performances: Tensor,
+        target_performances: Tensor
+    ) -> Dict[str, Tensor]:
+        """
+        计算最优设计引导损失
+        
+        Args:
+            designs: 设计参数 [B, H, W]
+            predicted_performances: 预测性能 [B, P]
+            target_performances: 目标性能 [B, P]
+            
+        Returns:
+            损失字典
+        """
+        # ========== 性能引导 ==========
+        # 鼓励预测性能超过目标（在可接受的范围内）
+        performance_margin = predicted_performances - target_performances
+        # 对于效率类指标，超过目标是好的
+        # 对于损耗类指标，低于目标是好的
+        # 这里假设第一个指标是效率
+        performance_guidance = F.relu(-performance_margin[:, 0])  # 惩罚效率低于目标
+        performance_guidance_loss = performance_guidance.mean()
+        
+        # ========== 物理合理性 ==========
+        # 体积约束：确保设计不是全空或全满
+        volume = designs.mean(dim=(1, 2))
+        target_volume = torch.tensor(0.5, device=designs.device)
+        volume_loss = F.mse_loss(volume, target_volume.expand_as(volume))
+        
+        # 连通性约束：避免孤立的小区域
+        if designs.dim() == 2:
+            designs = designs.unsqueeze(0)
+        
+        # 使用形态学操作近似检测孤立区域
+        kernel_size = max(3, int(self.min_feature_size / 0.01))  # 假设分辨率为 0.01
+        kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
+        
+        # 平均池化后的差异（检测小特征）
+        designs_4d = designs.unsqueeze(1)
+        pooled = F.avg_pool2d(designs_4d, kernel_size, stride=1, padding=kernel_size // 2)
+        isolation = (designs_4d - pooled).abs()
+        isolation_loss = isolation.mean()
+        
+        physical_loss = volume_loss + 0.5 * isolation_loss
+        
+        # ========== 平滑度约束 ==========
+        # 鼓励平滑的边界（但不能过于平滑）
+        grad_x = torch.abs(designs[:, :, 1:] - designs[:, :, :-1])
+        grad_y = torch.abs(designs[:, 1:, :] - designs[:, :-1, :])
+        smoothness = (grad_x.mean() + grad_y.mean()) / 2
+        
+        # 平滑度应该在合理范围内
+        target_smoothness = torch.tensor(0.1, device=designs.device)
+        smoothness_loss = F.mse_loss(smoothness, target_smoothness)
+        
+        # ========== 总损失 ==========
+        total = (
+            self.performance_weight * performance_guidance_loss +
+            self.physical_weight * physical_loss +
+            self.smoothness_weight * smoothness_loss
+        )
+        
+        return {
+            'performance_guidance': performance_guidance_loss,
+            'volume': volume_loss,
+            'isolation': isolation_loss,
+            'smoothness': smoothness_loss,
+            'guidance_total': total
+        }
+
+
 # 损失函数工厂
 LOSS_REGISTRY = {
     'mse': nn.MSELoss,
@@ -2178,6 +2759,12 @@ LOSS_REGISTRY = {
     'thermal': ThermalLoss,
     'robustness': RobustnessLoss,
     'physics_constraint': PhysicsConstraintLoss,
+    # TNN 专用损失函数（解决"平均设计"问题）
+    'inverse_contrastive': InverseContrastiveLoss,
+    'design_sharpness': DesignSharpnessLoss,
+    'diversity_preserving': DiversityPreservingLoss,
+    'tnn_anti_average': TNNAntiAverageLoss,
+    'optimal_design_guidance': OptimalDesignGuidanceLoss,
 }
 
 

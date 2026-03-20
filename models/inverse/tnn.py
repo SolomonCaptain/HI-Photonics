@@ -20,6 +20,13 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from models.base import BaseModel, ModelConfig, SurrogateModel, InverseModel
+from models.training.losses import (
+    InverseContrastiveLoss,
+    DesignSharpnessLoss,
+    DiversityPreservingLoss,
+    TNNAntiAverageLoss,
+    OptimalDesignGuidanceLoss
+)
 
 
 # ============================================================================
@@ -91,6 +98,29 @@ class TandemNetworkConfig(ModelConfig):
     performance_loss_weight: float = 1.0
     design_loss_weight: float = 0.0  # 可选的设计空间正则化
     diversity_loss_weight: float = 0.0  # 多样性正则化
+    
+    # ========== 新增：反"平均设计"损失权重 ==========
+    # 对比学习损失（解决一对多映射问题）
+    contrastive_loss_weight: float = 0.5
+    contrastive_temperature: float = 0.1
+    
+    # 设计锐度损失（避免模糊的平均设计）
+    sharpness_loss_weight: float = 0.3
+    target_sharpness: float = 0.8
+    
+    # 多样性保持损失（避免塌缩到均值）
+    diversity_preserve_weight: float = 0.2
+    num_design_modes: int = 4
+    
+    # 最优设计引导损失
+    guidance_loss_weight: float = 0.1
+    
+    # 综合反平均损失权重（如果使用 TNNAntiAverageLoss）
+    anti_average_weight: float = 0.0  # 设为 0 则使用分离的损失组件
+    
+    # 损失预热设置
+    contrastive_warmup_epochs: int = 0
+    sharpness_warmup_epochs: int = 0
 
 
 # ============================================================================
@@ -468,6 +498,59 @@ class TandemNetwork(BaseModel):
         # 训练状态
         self.forward_trained = False
         self.inverse_trained = False
+        
+        # ========== 初始化反"平均设计"损失函数 ==========
+        self._init_anti_average_losses()
+    
+    def _init_anti_average_losses(self):
+        """初始化反平均设计损失函数"""
+        config = self.config
+        
+        # 对比学习损失
+        if config.contrastive_loss_weight > 0 or config.anti_average_weight > 0:
+            self.contrastive_loss = InverseContrastiveLoss(
+                temperature=config.contrastive_temperature
+            )
+        else:
+            self.contrastive_loss = None
+        
+        # 设计锐度损失
+        if config.sharpness_loss_weight > 0 or config.anti_average_weight > 0:
+            self.sharpness_loss = DesignSharpnessLoss(
+                target_sharpness=config.target_sharpness
+            )
+        else:
+            self.sharpness_loss = None
+        
+        # 多样性保持损失
+        if config.diversity_preserve_weight > 0 or config.anti_average_weight > 0:
+            self.diversity_loss = DiversityPreservingLoss(
+                num_modes=config.num_design_modes
+            )
+        else:
+            self.diversity_loss = None
+        
+        # 最优设计引导损失
+        if config.guidance_loss_weight > 0:
+            self.guidance_loss = OptimalDesignGuidanceLoss()
+        else:
+            self.guidance_loss = None
+        
+        # 综合反平均损失（可选）
+        if config.anti_average_weight > 0:
+            self.anti_average_loss = TNNAntiAverageLoss(
+                contrastive_weight=config.contrastive_loss_weight,
+                sharpness_weight=config.sharpness_loss_weight,
+                diversity_weight=config.diversity_preserve_weight,
+                temperature=config.contrastive_temperature,
+                target_sharpness=config.target_sharpness,
+                num_modes=config.num_design_modes
+            )
+        else:
+            self.anti_average_loss = None
+        
+        # 当前训练轮次（用于预热）
+        self.current_epoch = 0
     
     def forward(self, design: Tensor) -> Tensor:
         """
@@ -602,12 +685,14 @@ class TandemNetwork(BaseModel):
         lr: float = 1e-4,
         weight_decay: float = 1e-5,
         patience: int = 15,
-        save_path: Optional[str] = None
+        save_path: Optional[str] = None,
+        log_interval: int = 10
     ) -> Dict[str, List[float]]:
         """
         训练逆向网络（串联训练）
         
         固定预训练的前向网络，训练逆向网络使预测性能接近目标。
+        集成反"平均设计"损失，确保生成多样化的最优设计。
         
         Args:
             train_loader: 训练数据加载器
@@ -617,6 +702,7 @@ class TandemNetwork(BaseModel):
             weight_decay: 权重衰减
             patience: 早停耐心值
             save_path: 模型保存路径
+            log_interval: 日志输出间隔
             
         Returns:
             训练历史
@@ -640,14 +726,33 @@ class TandemNetwork(BaseModel):
         
         best_val_loss = float('inf')
         patience_counter = 0
-        inverse_history = {'train_loss': [], 'val_loss': []}
+        inverse_history = {
+            'train_loss': [],
+            'val_loss': [],
+            'train_perf_loss': [],
+            'train_contrastive_loss': [],
+            'train_sharpness_loss': [],
+            'train_diversity_loss': []
+        }
         
         for epoch in range(epochs):
+            self.current_epoch = epoch  # 用于预热
+            self.inverse_net.train()
+            
             # 训练阶段
-            train_loss = 0.0
+            epoch_losses = {
+                'total': 0.0,
+                'performance': 0.0,
+                'contrastive': 0.0,
+                'sharpness': 0.0,
+                'diversity': 0.0
+            }
+            
             for batch in train_loader:
                 target_performance = batch['performance'].to(self.device)
-                design_gt = batch['design'].to(self.device)
+                design_gt = batch.get('design', None)
+                if design_gt is not None:
+                    design_gt = design_gt.to(self.device)
                 
                 optimizer.zero_grad()
                 
@@ -657,18 +762,31 @@ class TandemNetwork(BaseModel):
                 # 前向网络预测性能
                 pred_performance = self.forward_net(design)
                 
-                # 计算损失
-                loss = self._compute_tandem_loss(
+                # 计算损失（包含反平均设计损失）
+                loss, loss_dict = self._compute_tandem_loss(
                     pred_performance, target_performance, design, design_gt
                 )
                 
                 loss.backward()
                 optimizer.step()
                 
-                train_loss += loss.item()
+                # 记录损失
+                epoch_losses['total'] += loss.item()
+                epoch_losses['performance'] += loss_dict.get('performance', torch.tensor(0.0)).item()
+                epoch_losses['contrastive'] += loss_dict.get('contrastive_contrastive_total', torch.tensor(0.0)).item()
+                epoch_losses['sharpness'] += loss_dict.get('sharpness_sharpness_total', torch.tensor(0.0)).item()
+                epoch_losses['diversity'] += loss_dict.get('diversity_diversity_total', torch.tensor(0.0)).item()
             
-            train_loss /= len(train_loader)
-            inverse_history['train_loss'].append(train_loss)
+            # 平均损失
+            num_batches = len(train_loader)
+            for k in epoch_losses:
+                epoch_losses[k] /= num_batches
+            
+            inverse_history['train_loss'].append(epoch_losses['total'])
+            inverse_history['train_perf_loss'].append(epoch_losses['performance'])
+            inverse_history['train_contrastive_loss'].append(epoch_losses['contrastive'])
+            inverse_history['train_sharpness_loss'].append(epoch_losses['sharpness'])
+            inverse_history['train_diversity_loss'].append(epoch_losses['diversity'])
             
             # 验证阶段
             if val_loader is not None:
@@ -689,11 +807,22 @@ class TandemNetwork(BaseModel):
                         print(f"Early stopping at epoch {epoch + 1}")
                         break
                 
-                if (epoch + 1) % 10 == 0:
-                    print(f"Epoch {epoch + 1}: train_loss={train_loss:.4f}, val_loss={val_loss:.4f}")
+                if (epoch + 1) % log_interval == 0:
+                    print(f"Epoch {epoch + 1}: "
+                          f"train_loss={epoch_losses['total']:.4f}, "
+                          f"perf={epoch_losses['performance']:.4f}, "
+                          f"contrast={epoch_losses['contrastive']:.4f}, "
+                          f"sharp={epoch_losses['sharpness']:.4f}, "
+                          f"diversity={epoch_losses['diversity']:.4f}, "
+                          f"val_loss={val_loss:.4f}")
             else:
-                if (epoch + 1) % 10 == 0:
-                    print(f"Epoch {epoch + 1}: train_loss={train_loss:.4f}")
+                if (epoch + 1) % log_interval == 0:
+                    print(f"Epoch {epoch + 1}: "
+                          f"train_loss={epoch_losses['total']:.4f}, "
+                          f"perf={epoch_losses['performance']:.4f}, "
+                          f"contrast={epoch_losses['contrastive']:.4f}, "
+                          f"sharp={epoch_losses['sharpness']:.4f}, "
+                          f"diversity={epoch_losses['diversity']:.4f}")
         
         self.inverse_trained = True
         return inverse_history
@@ -703,31 +832,111 @@ class TandemNetwork(BaseModel):
         pred_performance: Tensor,
         target_performance: Tensor,
         design: Tensor,
-        design_gt: Optional[Tensor] = None
-    ) -> Tensor:
+        design_gt: Optional[Tensor] = None,
+        design_features: Optional[Tensor] = None
+    ) -> Tuple[Tensor, Dict[str, Tensor]]:
         """
         计算串联网络损失
         
-        L = w_perf * L_perf + w_design * L_design + w_div * L_div
+        包含：
+        1. 性能重建损失
+        2. 设计空间正则化（可选）
+        3. 反"平均设计"损失：
+           - 对比学习损失
+           - 设计锐度损失
+           - 多样性保持损失
+           - 最优设计引导损失
+        
+        Args:
+            pred_performance: 预测性能
+            target_performance: 目标性能
+            design: 生成的设计
+            design_gt: 真实设计（可选）
+            design_features: 设计特征（可选）
+            
+        Returns:
+            total_loss: 总损失
+            loss_dict: 损失详情字典
         """
-        # 性能重建损失
+        loss_dict = {}
+        
+        # ========== 性能重建损失 ==========
         perf_loss = F.mse_loss(pred_performance, target_performance)
+        loss_dict['performance'] = perf_loss
         
         total_loss = self.config.performance_loss_weight * perf_loss
         
-        # 设计空间正则化（可选）
+        # ========== 设计空间正则化（可选）==========
         if self.config.design_loss_weight > 0 and design_gt is not None:
             design_loss = F.mse_loss(design, design_gt)
+            loss_dict['design'] = design_loss
             total_loss += self.config.design_loss_weight * design_loss
         
-        # 多样性正则化（可选）
+        # ========== 旧版多样性正则化（保持兼容）==========
         if self.config.diversity_loss_weight > 0:
-            # 鼓励设计多样性
             design_flat = design.view(design.size(0), -1)
             diversity_loss = -torch.pdist(design_flat).mean()
+            loss_dict['diversity_legacy'] = diversity_loss
             total_loss += self.config.diversity_loss_weight * diversity_loss
         
-        return total_loss
+        # ========== 反"平均设计"损失 ==========
+        # 获取当前权重（考虑预热）
+        contrastive_weight = self._get_warmup_weight(
+            self.config.contrastive_loss_weight,
+            self.config.contrastive_warmup_epochs
+        )
+        sharpness_weight = self._get_warmup_weight(
+            self.config.sharpness_loss_weight,
+            self.config.sharpness_warmup_epochs
+        )
+        
+        # 使用综合反平均损失
+        if self.anti_average_loss is not None and self.config.anti_average_weight > 0:
+            anti_avg_losses = self.anti_average_loss(design, target_performance, design_features)
+            for k, v in anti_avg_losses.items():
+                loss_dict[f'anti_avg_{k}'] = v
+            total_loss += self.config.anti_average_weight * anti_avg_losses['anti_average_total']
+        
+        else:
+            # 分离的损失组件
+            
+            # 对比学习损失
+            if self.contrastive_loss is not None and contrastive_weight > 0:
+                contrastive_losses = self.contrastive_loss(design, target_performance, design_features)
+                for k, v in contrastive_losses.items():
+                    loss_dict[f'contrastive_{k}'] = v
+                total_loss += contrastive_weight * contrastive_losses['contrastive_total']
+            
+            # 设计锐度损失
+            if self.sharpness_loss is not None and sharpness_weight > 0:
+                sharpness_losses = self.sharpness_loss(design)
+                for k, v in sharpness_losses.items():
+                    loss_dict[f'sharpness_{k}'] = v
+                total_loss += sharpness_weight * sharpness_losses['sharpness_total']
+            
+            # 多样性保持损失
+            if self.diversity_loss is not None and self.config.diversity_preserve_weight > 0:
+                diversity_losses = self.diversity_loss(design)
+                for k, v in diversity_losses.items():
+                    loss_dict[f'diversity_{k}'] = v
+                total_loss += self.config.diversity_preserve_weight * diversity_losses['diversity_total']
+        
+        # 最优设计引导损失
+        if self.guidance_loss is not None and self.config.guidance_loss_weight > 0:
+            guidance_losses = self.guidance_loss(design, pred_performance, target_performance)
+            for k, v in guidance_losses.items():
+                loss_dict[f'guidance_{k}'] = v
+            total_loss += self.config.guidance_loss_weight * guidance_losses['guidance_total']
+        
+        loss_dict['total'] = total_loss
+        
+        return total_loss, loss_dict
+    
+    def _get_warmup_weight(self, target_weight: float, warmup_epochs: int) -> float:
+        """获取考虑预热后的权重"""
+        if warmup_epochs <= 0 or self.current_epoch >= warmup_epochs:
+            return target_weight
+        return target_weight * (self.current_epoch + 1) / warmup_epochs
     
     def _validate_forward(self, val_loader) -> float:
         """验证前向网络"""
@@ -801,7 +1010,66 @@ class TandemNetwork(BaseModel):
             'inverse_parameters': self.inverse_net.count_parameters(),
             'total_parameters': self.forward_net.count_parameters() + self.inverse_net.count_parameters(),
             'forward_trained': self.forward_trained,
-            'inverse_trained': self.inverse_trained
+            'inverse_trained': self.inverse_trained,
+            # 反平均设计损失配置
+            'anti_average_config': {
+                'contrastive_weight': self.config.contrastive_loss_weight,
+                'sharpness_weight': self.config.sharpness_loss_weight,
+                'diversity_weight': self.config.diversity_preserve_weight,
+                'guidance_weight': self.config.guidance_loss_weight,
+                'anti_average_weight': self.config.anti_average_weight
+            }
+        }
+    
+    def get_design_diversity_score(self, designs: Tensor) -> float:
+        """
+        计算设计多样性分数
+        
+        Args:
+            designs: 设计参数 [B, H, W]
+            
+        Returns:
+            多样性分数（越高越多样）
+        """
+        designs_flat = designs.view(designs.size(0), -1)
+        
+        # 计算批次内平均距离
+        if designs_flat.size(0) > 1:
+            dist = torch.pdist(designs_flat)
+            return dist.mean().item()
+        
+        return 0.0
+    
+    def get_design_sharpness_score(self, designs: Tensor) -> Dict[str, float]:
+        """
+        计算设计锐度分数
+        
+        Args:
+            designs: 设计参数 [B, H, W]
+            
+        Returns:
+            锐度指标字典
+        """
+        if designs.dim() == 2:
+            designs = designs.unsqueeze(0)
+        
+        # 二值化程度
+        p = torch.clamp(designs, min=1e-7, max=1 - 1e-7)
+        entropy = -p * torch.log(p) - (1 - p) * torch.log(1 - p)
+        max_entropy = -0.5 * torch.log(torch.tensor(0.5)) - 0.5 * torch.log(torch.tensor(0.5))
+        normalized_entropy = entropy / max_entropy
+        binary_score = 1.0 - normalized_entropy.mean().item()  # 越高越二值化
+        
+        # 梯度强度
+        grad_x = torch.abs(designs[:, :, 1:] - designs[:, :, :-1])
+        grad_y = torch.abs(designs[:, 1:, :] - designs[:, :-1, :])
+        grad_magnitude = (grad_x[:, :, :-1] + grad_y[:, :-1, :]) / 2
+        sharpness_score = grad_magnitude.mean().item()
+        
+        return {
+            'binary_score': binary_score,  # 接近 1 表示二值化
+            'sharpness_score': sharpness_score,  # 梯度强度
+            'is_sharp': binary_score > 0.7 and sharpness_score > 0.1
         }
 
 

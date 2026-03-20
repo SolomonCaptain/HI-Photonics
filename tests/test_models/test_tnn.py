@@ -22,7 +22,14 @@ from models.inverse.tnn import (
     InverseNetworkConfig,
     TandemNetworkConfig
 )
-from models.training.losses import TandemLoss, PerformanceLoss
+from models.training.losses import (
+    TandemLoss, PerformanceLoss,
+    InverseContrastiveLoss,
+    DesignSharpnessLoss,
+    DiversityPreservingLoss,
+    TNNAntiAverageLoss,
+    OptimalDesignGuidanceLoss
+)
 from models.training.metrics import MSE, MAE, R2Score
 from data.loaders.pipeline import SyntheticDataset, create_dataloaders
 
@@ -384,6 +391,270 @@ class TestGraphIntegration:
         
         assert design.shape == (1, 50, 11)
         assert pred_perf.shape == (1, 3)
+
+
+class TestAntiAverageLosses:
+    """反平均设计损失函数测试"""
+    
+    def test_inverse_contrastive_loss(self):
+        """测试逆向设计对比学习损失"""
+        loss_fn = InverseContrastiveLoss(temperature=0.1)
+        
+        batch_size = 8
+        designs = torch.rand(batch_size, 50, 11)
+        performances = torch.rand(batch_size, 3)
+        
+        losses = loss_fn(designs, performances)
+        
+        assert 'contrastive_total' in losses
+        assert losses['contrastive_total'].dim() == 0
+        print(f"Contrastive loss: {losses['contrastive_total'].item():.4f}")
+    
+    def test_contrastive_loss_with_similar_performances(self):
+        """测试相同性能的设计应该被推远"""
+        loss_fn = InverseContrastiveLoss(temperature=0.1, design_diversity_weight=1.0)
+        
+        # 创建相同性能的设计
+        performances = torch.tensor([
+            [0.8, 0.1, 0.1],
+            [0.8, 0.1, 0.1],
+            [0.8, 0.1, 0.1],
+            [0.5, 0.3, 0.2],
+            [0.5, 0.3, 0.2],
+        ])
+        
+        # 设计稍微不同
+        designs = torch.rand(5, 50, 11)
+        
+        losses = loss_fn(designs, performances)
+        
+        # 相同性能的设计应该有高多样性损失
+        print(f"Design diversity loss: {losses['design_diversity'].item():.4f}")
+        assert losses['design_diversity'].item() >= 0
+    
+    def test_design_sharpness_loss(self):
+        """测试设计锐度损失"""
+        loss_fn = DesignSharpnessLoss(target_sharpness=0.8)
+        
+        # 创建模糊设计（接近 0.5）
+        blurry_design = torch.ones(4, 50, 11) * 0.5
+        
+        # 创建锐利设计（二值化）
+        sharp_design = (torch.rand(4, 50, 11) > 0.5).float()
+        
+        blurry_losses = loss_fn(blurry_design)
+        sharp_losses = loss_fn(sharp_design)
+        
+        # 模糊设计应该有更高的二值化损失
+        assert blurry_losses['binary'].item() > sharp_losses['binary'].item()
+        print(f"Blurry binary loss: {blurry_losses['binary'].item():.4f}")
+        print(f"Sharp binary loss: {sharp_losses['binary'].item():.4f}")
+    
+    def test_diversity_preserving_loss(self):
+        """测试多样性保持损失"""
+        loss_fn = DiversityPreservingLoss(num_modes=4)
+        
+        # 创建多样化设计
+        diverse_designs = torch.rand(16, 50, 11)
+        
+        # 创建塌缩设计（都相似）
+        collapsed_designs = torch.ones(16, 50, 11) * 0.5 + torch.randn(16, 50, 11) * 0.01
+        
+        diverse_losses = loss_fn(diverse_designs)
+        collapsed_losses = loss_fn(collapsed_designs)
+        
+        # 多样化设计的平均距离应该更大
+        assert diverse_losses['avg_distance'].item() > collapsed_losses['avg_distance'].item()
+        print(f"Diverse avg distance: {diverse_losses['avg_distance'].item():.4f}")
+        print(f"Collapsed avg distance: {collapsed_losses['avg_distance'].item():.4f}")
+    
+    def test_tnn_anti_average_loss(self):
+        """测试综合反平均损失"""
+        loss_fn = TNNAntiAverageLoss(
+            contrastive_weight=0.5,
+            sharpness_weight=0.3,
+            diversity_weight=0.2
+        )
+        
+        designs = torch.rand(8, 50, 11)
+        performances = torch.rand(8, 3)
+        
+        losses = loss_fn(designs, performances)
+        
+        assert 'anti_average_total' in losses
+        print(f"Anti-average total loss: {losses['anti_average_total'].item():.4f}")
+    
+    def test_optimal_design_guidance_loss(self):
+        """测试最优设计引导损失"""
+        loss_fn = OptimalDesignGuidanceLoss()
+        
+        designs = torch.rand(4, 50, 11)
+        pred_perf = torch.tensor([[0.7, 0.2, 0.1], [0.8, 0.1, 0.1], [0.6, 0.3, 0.1], [0.9, 0.05, 0.05]])
+        target_perf = torch.tensor([[0.8, 0.1, 0.1], [0.8, 0.1, 0.1], [0.8, 0.1, 0.1], [0.8, 0.1, 0.1]])
+        
+        losses = loss_fn(designs, pred_perf, target_perf)
+        
+        assert 'guidance_total' in losses
+        print(f"Guidance total loss: {losses['guidance_total'].item():.4f}")
+
+
+class TestTNNWithAntiAverageLoss:
+    """TNN 集成反平均损失测试"""
+    
+    def test_tnn_config_with_anti_average(self):
+        """测试 TNN 配置支持反平均损失参数"""
+        config = TandemNetworkConfig(
+            contrastive_loss_weight=0.5,
+            sharpness_loss_weight=0.3,
+            diversity_preserve_weight=0.2,
+            guidance_loss_weight=0.1
+        )
+        
+        assert config.contrastive_loss_weight == 0.5
+        assert config.sharpness_loss_weight == 0.3
+        assert config.diversity_preserve_weight == 0.2
+        assert config.guidance_loss_weight == 0.1
+    
+    def test_tnn_init_with_anti_average_losses(self):
+        """测试 TNN 初始化反平均损失组件"""
+        forward_config = ForwardNetworkConfig(
+            design_shape=(50, 11),
+            performance_dim=3,
+            hidden_channels=[16, 32],
+            hidden_dims=[64]
+        )
+        
+        inverse_config = InverseNetworkConfig(
+            design_shape=(50, 11),
+            performance_dim=3,
+            hidden_dims=[64, 128],
+            hidden_channels=[32, 16]
+        )
+        
+        tandem_config = TandemNetworkConfig(
+            forward_config=forward_config,
+            inverse_config=inverse_config,
+            contrastive_loss_weight=0.5,
+            sharpness_loss_weight=0.3,
+            diversity_preserve_weight=0.2
+        )
+        
+        tnn = TandemNetwork(tandem_config)
+        
+        # 检查损失函数已初始化
+        assert tnn.contrastive_loss is not None
+        assert tnn.sharpness_loss is not None
+        assert tnn.diversity_loss is not None
+    
+    def test_tnn_compute_tandem_loss_with_anti_average(self):
+        """测试 TNN 计算损失包含反平均组件"""
+        forward_config = ForwardNetworkConfig(
+            design_shape=(50, 11),
+            performance_dim=3,
+            hidden_channels=[16, 32],
+            hidden_dims=[64]
+        )
+        
+        inverse_config = InverseNetworkConfig(
+            design_shape=(50, 11),
+            performance_dim=3,
+            hidden_dims=[64, 128],
+            hidden_channels=[32, 16]
+        )
+        
+        tandem_config = TandemNetworkConfig(
+            forward_config=forward_config,
+            inverse_config=inverse_config,
+            contrastive_loss_weight=0.5,
+            sharpness_loss_weight=0.3,
+            diversity_preserve_weight=0.2
+        )
+        
+        tnn = TandemNetwork(tandem_config)
+        
+        # 创建测试数据
+        pred_perf = torch.rand(4, 3)
+        target_perf = torch.rand(4, 3)
+        designs = torch.rand(4, 50, 11)
+        
+        total_loss, loss_dict = tnn._compute_tandem_loss(pred_perf, target_perf, designs)
+        
+        # 检查损失字典包含反平均损失
+        assert 'total' in loss_dict
+        assert 'performance' in loss_dict
+        assert total_loss.dim() == 0
+        
+        print(f"Total loss: {total_loss.item():.4f}")
+        print(f"Performance loss: {loss_dict['performance'].item():.4f}")
+    
+    def test_tnn_design_metrics(self):
+        """测试 TNN 设计评估指标"""
+        forward_config = ForwardNetworkConfig(
+            design_shape=(50, 11),
+            performance_dim=3,
+            hidden_channels=[16, 32],
+            hidden_dims=[64]
+        )
+        
+        inverse_config = InverseNetworkConfig(
+            design_shape=(50, 11),
+            performance_dim=3,
+            hidden_dims=[64, 128],
+            hidden_channels=[32, 16]
+        )
+        
+        tandem_config = TandemNetworkConfig(
+            forward_config=forward_config,
+            inverse_config=inverse_config
+        )
+        
+        tnn = TandemNetwork(tandem_config)
+        
+        # 创建测试设计
+        designs = torch.rand(8, 50, 11)
+        
+        # 测试多样性分数
+        diversity_score = tnn.get_design_diversity_score(designs)
+        assert isinstance(diversity_score, float)
+        print(f"Diversity score: {diversity_score:.4f}")
+        
+        # 测试锐度分数
+        sharpness = tnn.get_design_sharpness_score(designs)
+        assert 'binary_score' in sharpness
+        assert 'sharpness_score' in sharpness
+        assert 'is_sharp' in sharpness
+        print(f"Binary score: {sharpness['binary_score']:.4f}")
+        print(f"Sharpness score: {sharpness['sharpness_score']:.4f}")
+    
+    def test_tnn_get_model_info_with_anti_average(self):
+        """测试模型信息包含反平均配置"""
+        forward_config = ForwardNetworkConfig(
+            design_shape=(50, 11),
+            performance_dim=3,
+            hidden_channels=[16, 32],
+            hidden_dims=[64]
+        )
+        
+        inverse_config = InverseNetworkConfig(
+            design_shape=(50, 11),
+            performance_dim=3,
+            hidden_dims=[64, 128],
+            hidden_channels=[32, 16]
+        )
+        
+        tandem_config = TandemNetworkConfig(
+            forward_config=forward_config,
+            inverse_config=inverse_config,
+            contrastive_loss_weight=0.5,
+            sharpness_loss_weight=0.3
+        )
+        
+        tnn = TandemNetwork(tandem_config)
+        info = tnn.get_model_info()
+        
+        assert 'anti_average_config' in info
+        assert info['anti_average_config']['contrastive_weight'] == 0.5
+        assert info['anti_average_config']['sharpness_weight'] == 0.3
 
 
 if __name__ == "__main__":
