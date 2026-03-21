@@ -1,0 +1,54 @@
+{
+    "id": "tpl_hilab_workflow",
+    "name": "HiLab 工作流",
+    "description": "VAE + 贝叶斯优化的探索式逆向设计",
+    "category": "高级",
+    "icon": "Science",
+    "tags": ["探索", "优化", "HiLab"],
+    "nodes": [
+        {
+            "id": "node_param",
+            "type": "parameterization",
+            "position": {"x": 100, "y": 150},
+            "data": {"label": "参数化", "params": {"shape": [100, 22], "method": "density", "bounds": [0, 1]}, "status": "idle"}
+        },
+        {
+            "id": "node_filter",
+            "type": "filter",
+            "position": {"x": 300, "y": 150},
+            "data": {"label": "滤波器", "params": {"type": "gaussian", "sigma": 1.0}, "status": "idle"}
+        },
+        {
+            "id": "node_sim",
+            "type": "simulation",
+            "position": {"x": 500, "y": 150},
+            "data": {"label": "仿真器", "params": {"simulator": "meep", "wavelength": 1.55, "resolution": 50}, "status": "idle"}
+        },
+        {
+            "id": "node_obj",
+            "type": "objective",
+            "position": {"x": 700, "y": 150},
+            "data": {"label": "目标函数", "params": {"type": "efficiency", "target": 0.9, "weight": 1.0}, "status": "idle"}
+        },
+        {
+            "id": "node_opt",
+            "type": "optimizer",
+            "position": {"x": 400, "y": 300},
+            "data": {"label": "优化器", "params": {"method": "adam", "iterations": 100, "learningRate": 0.01}, "status": "idle"}
+        },
+        {
+            "id": "node_output",
+            "type": "output",
+            "position": {"x": 600, "y": 300},
+            "data": {"label": "输出", "params": {}, "status": "idle"}
+        }
+    ],
+    "edges": [
+        {"id": "edge_1", "source": "node_param", "source_handle": "design", "target": "node_filter", "target_handle": "design"},
+        {"id": "edge_2", "source": "node_filter", "source_handle": "filtered", "target": "node_sim", "target_handle": "design"},
+        {"id": "edge_3", "source": "node_sim", "source_handle": "performance", "target": "node_obj", "target_handle": "performance"},
+        {"id": "edge_4", "source": "node_obj", "source_handle": "loss", "target": "node_opt", "target_handle": "objective"},
+        {"id": "edge_5", "source": "node_param", "source_handle": "design", "target": "node_opt", "target_handle": "design"},
+        {"id": "edge_6", "source": "node_opt", "source_handle": "optimized", "target": "node_output", "target_handle": "design"}
+    ]
+}

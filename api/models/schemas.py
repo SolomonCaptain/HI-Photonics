@@ -161,3 +161,117 @@ class DatasetInfo(BaseModel):
     train_samples: int
     val_samples: int
     test_samples: int
+
+
+# ===== 资源管理相关 =====
+
+class ResourceCategory(str, Enum):
+    """资源大类"""
+    INPUTS = "inputs"
+    OUTPUTS = "outputs"
+    MODELS = "models"
+    WORKFLOWS = "workflows"
+
+
+class AssetTypeEnum(str, Enum):
+    """资产类型"""
+    # 输入类
+    DATASET = "dataset"
+    SPECTRUM = "spectrum"
+    GDS = "gds"
+    STRUCTURE = "structure"
+    # 输出类
+    DESIGN = "design"
+    SIMULATION = "simulation"
+    EXPORT = "export"
+    # 其他
+    FIELD = "field"
+    MODEL_WEIGHTS = "model_weights"
+
+
+class AssetInfo(BaseModel):
+    """资产信息"""
+    id: str
+    name: str
+    type: AssetTypeEnum
+    category: ResourceCategory
+    description: Optional[str] = None
+    file_path: str
+    file_size: int = 0
+    created_at: str
+    updated_at: str
+    metadata: Optional[Dict[str, Any]] = None
+    thumbnail: Optional[str] = None
+
+    class Config:
+        use_enum_values = True
+
+
+class AssetCreate(BaseModel):
+    """创建资产请求"""
+    name: str
+    type: AssetTypeEnum
+    category: ResourceCategory
+    description: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class AssetUpdate(BaseModel):
+    """更新资产请求"""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class ModelInfo(BaseModel):
+    """模型信息"""
+    id: str
+    name: str
+    type: ModelTypeEnum
+    challenge: str
+    description: Optional[str] = None
+    file_path: str
+    file_size: int = 0
+    metrics: Optional[Dict[str, float]] = None
+    created_at: str
+    updated_at: str
+    is_pretrained: bool = False
+
+    class Config:
+        use_enum_values = True
+
+
+class SavedWorkflow(BaseModel):
+    """已保存的工作流"""
+    id: str
+    name: str
+    description: Optional[str] = None
+    nodes: List[NodeInstance]
+    edges: List[NodeConnection]
+    file_path: str
+    created_at: str
+    updated_at: str
+    tags: Optional[List[str]] = None
+
+
+class WorkflowTemplate(BaseModel):
+    """工作流模板"""
+    id: str
+    name: str
+    description: Optional[str] = None
+    category: str
+    icon: str
+    nodes: List[NodeInstance]
+    edges: List[NodeConnection]
+    tags: Optional[List[str]] = None
+    file_path: str
+
+
+class DirectoryInfo(BaseModel):
+    """目录信息"""
+    path: str
+    name: str
+    category: ResourceCategory
+    total_size: int
+    file_count: int
+    subdirectories: List[str]

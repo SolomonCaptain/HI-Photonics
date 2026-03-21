@@ -1,0 +1,68 @@
+{
+    "id": "tpl_wdm_design",
+    "name": "波分复用器设计",
+    "description": "完整的波分复用器逆向设计流程",
+    "category": "应用",
+    "icon": "Waves",
+    "tags": ["WDM", "实用", "多通道"],
+    "nodes": [
+        {
+            "id": "node_param",
+            "type": "parameterization",
+            "position": {"x": 100, "y": 150},
+            "data": {"label": "参数化", "params": {"shape": [200, 100], "method": "topology", "bounds": [0, 1]}, "status": "idle"}
+        },
+        {
+            "id": "node_filter",
+            "type": "filter",
+            "position": {"x": 300, "y": 150},
+            "data": {"label": "滤波器", "params": {"type": "gaussian", "sigma": 2.0}, "status": "idle"}
+        },
+        {
+            "id": "node_proj",
+            "type": "projection",
+            "position": {"x": 500, "y": 150},
+            "data": {"label": "投影", "params": {"method": "sigmoid", "threshold": 0.5, "sharpness": 10.0}, "status": "idle"}
+        },
+        {
+            "id": "node_sim",
+            "type": "simulation",
+            "position": {"x": 700, "y": 150},
+            "data": {"label": "多波长仿真", "params": {"simulator": "meep", "wavelength": 1.55, "resolution": 50}, "status": "idle"}
+        },
+        {
+            "id": "node_obj",
+            "type": "objective",
+            "position": {"x": 900, "y": 150},
+            "data": {"label": "目标函数", "params": {"type": "bandwidth", "target": 0.8, "weight": 1.0}, "status": "idle"}
+        },
+        {
+            "id": "node_constraint",
+            "type": "constraint",
+            "position": {"x": 900, "y": 280},
+            "data": {"label": "制造约束", "params": {"type": "curvature", "target": 0.1}, "status": "idle"}
+        },
+        {
+            "id": "node_opt",
+            "type": "optimizer",
+            "position": {"x": 500, "y": 280},
+            "data": {"label": "优化器", "params": {"method": "adam", "iterations": 500, "learningRate": 0.01}, "status": "idle"}
+        },
+        {
+            "id": "node_output",
+            "type": "output",
+            "position": {"x": 300, "y": 280},
+            "data": {"label": "输出", "params": {}, "status": "idle"}
+        }
+    ],
+    "edges": [
+        {"id": "edge_1", "source": "node_param", "source_handle": "design", "target": "node_filter", "target_handle": "design"},
+        {"id": "edge_2", "source": "node_filter", "source_handle": "filtered", "target": "node_proj", "target_handle": "design"},
+        {"id": "edge_3", "source": "node_proj", "source_handle": "projected", "target": "node_sim", "target_handle": "design"},
+        {"id": "edge_4", "source": "node_sim", "source_handle": "performance", "target": "node_obj", "target_handle": "performance"},
+        {"id": "edge_5", "source": "node_proj", "source_handle": "projected", "target": "node_constraint", "target_handle": "design"},
+        {"id": "edge_6", "source": "node_obj", "source_handle": "loss", "target": "node_opt", "target_handle": "objective"},
+        {"id": "edge_7", "source": "node_param", "source_handle": "design", "target": "node_opt", "target_handle": "design"},
+        {"id": "edge_8", "source": "node_opt", "source_handle": "optimized", "target": "node_output", "target_handle": "design"}
+    ]
+}

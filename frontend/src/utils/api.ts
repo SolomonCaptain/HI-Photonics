@@ -90,4 +90,91 @@ export const systemApi = {
         apiClient.get('/api/system/info'),
 };
 
+// 资源管理 API
+export const resourceApi = {
+    // ===== 资产管理 =====
+    // 列出资产
+    listAssets: (params?: { category?: string; assetType?: string; search?: string }) =>
+        apiClient.get('/api/resources/assets', { params }),
+
+    // 获取资产详情
+    getAsset: (assetId: string, category: string) =>
+        apiClient.get(`/api/resources/assets/${assetId}`, { params: { category } }),
+
+    // 上传资产
+    uploadAsset: (formData: FormData) =>
+        apiClient.post('/api/resources/assets', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        }),
+
+    // 更新资产元数据
+    updateAsset: (assetId: string, category: string, data: any) =>
+        apiClient.patch(`/api/resources/assets/${assetId}`, data, { params: { category } }),
+
+    // 删除资产
+    deleteAsset: (assetId: string, category: string) =>
+        apiClient.delete(`/api/resources/assets/${assetId}`, { params: { category } }),
+
+    // 下载资产
+    downloadAsset: (assetId: string, category: string) =>
+        apiClient.get(`/api/resources/assets/${assetId}/download`, {
+            params: { category },
+            responseType: 'blob',
+        }),
+
+    // 批量删除资产
+    batchDeleteAssets: (assetIds: string[], category: string) =>
+        apiClient.post('/api/resources/assets/batch-delete', assetIds, { params: { category } }),
+
+    // ===== 模型管理 =====
+    // 列出模型
+    listModels: (params?: { modelType?: string; challenge?: string; pretrainedOnly?: boolean }) =>
+        apiClient.get('/api/resources/models', { params }),
+
+    // 获取模型详情
+    getModel: (modelId: string) =>
+        apiClient.get(`/api/resources/models/${modelId}`),
+
+    // 删除模型
+    deleteModel: (modelId: string) =>
+        apiClient.delete(`/api/resources/models/${modelId}`),
+
+    // 下载模型
+    downloadModel: (modelId: string) =>
+        apiClient.get(`/api/resources/models/${modelId}/download`, {
+            responseType: 'blob',
+        }),
+
+    // ===== 工作流管理 =====
+    // 列出已保存的工作流
+    listWorkflows: (search?: string) =>
+        apiClient.get('/api/resources/workflows', { params: { search } }),
+
+    // 获取工作流详情
+    getWorkflow: (workflowId: string) =>
+        apiClient.get(`/api/resources/workflows/${workflowId}`),
+
+    // 保存工作流
+    saveWorkflow: (data: { name: string; nodes: any[]; edges: any[]; description?: string; tags?: string[] }) =>
+        apiClient.post('/api/resources/workflows', data),
+
+    // 删除工作流
+    deleteWorkflow: (workflowId: string) =>
+        apiClient.delete(`/api/resources/workflows/${workflowId}`),
+
+    // ===== 模板管理 =====
+    // 列出模板
+    listTemplates: (category?: string) =>
+        apiClient.get('/api/resources/templates', { params: { category } }),
+
+    // 获取模板详情
+    getTemplate: (templateId: string) =>
+        apiClient.get(`/api/resources/templates/${templateId}`),
+
+    // ===== 目录信息 =====
+    // 获取目录信息
+    getDirectoryInfo: (category: string) =>
+        apiClient.get(`/api/resources/directories/${category}`),
+};
+
 export default apiClient;

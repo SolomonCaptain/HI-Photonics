@@ -1,0 +1,39 @@
+{
+    "id": "tpl_basic_inverse",
+    "name": "基础逆向设计",
+    "description": "使用神经网络进行基础的逆向设计流程",
+    "category": "基础",
+    "icon": "AutoFixHigh",
+    "tags": ["入门", "快速"],
+    "nodes": [
+        {
+            "id": "node_data",
+            "type": "data_load",
+            "position": {"x": 100, "y": 100},
+            "data": {"label": "数据加载", "params": {"source": "synthetic", "numSamples": 1000, "designShape": [100, 22]}, "status": "idle"}
+        },
+        {
+            "id": "node_train",
+            "type": "model_train",
+            "position": {"x": 300, "y": 100},
+            "data": {"label": "模型训练", "params": {"modelType": "hilab", "epochs": 100, "batchSize": 32, "learningRate": 0.001}, "status": "idle"}
+        },
+        {
+            "id": "node_infer",
+            "type": "model_infer",
+            "position": {"x": 500, "y": 100},
+            "data": {"label": "模型推理", "params": {"numSamples": 1, "diversity": 0.0}, "status": "idle"}
+        },
+        {
+            "id": "node_output",
+            "type": "output",
+            "position": {"x": 700, "y": 100},
+            "data": {"label": "输出", "params": {}, "status": "idle"}
+        }
+    ],
+    "edges": [
+        {"id": "edge_1", "source": "node_data", "source_handle": "data", "target": "node_train", "target_handle": "data"},
+        {"id": "edge_2", "source": "node_train", "source_handle": "model", "target": "node_infer", "target_handle": "model"},
+        {"id": "edge_3", "source": "node_infer", "source_handle": "design", "target": "node_output", "target_handle": "design"}
+    ]
+}

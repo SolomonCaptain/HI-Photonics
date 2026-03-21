@@ -1,0 +1,33 @@
+{
+    "id": "tpl_quick_sim",
+    "name": "快速仿真",
+    "description": "简化的仿真流程，快速验证设计",
+    "category": "仿真",
+    "icon": "Speed",
+    "tags": ["快速", "仿真", "验证"],
+    "nodes": [
+        {
+            "id": "node_param",
+            "type": "parameterization",
+            "position": {"x": 150, "y": 200},
+            "data": {"label": "参数化", "params": {"shape": [50, 22], "method": "density", "bounds": [0, 1]}, "status": "idle"}
+        },
+        {
+            "id": "node_sim",
+            "type": "simulation",
+            "position": {"x": 400, "y": 200},
+            "data": {"label": "快速仿真", "params": {"simulator": "optics", "wavelength": 1.55, "resolution": 30}, "status": "idle"}
+        },
+        {
+            "id": "node_output",
+            "type": "output",
+            "position": {"x": 650, "y": 200},
+            "data": {"label": "输出", "params": {}, "status": "idle"}
+        }
+    ],
+    "edges": [
+        {"id": "edge_1", "source": "node_param", "source_handle": "design", "target": "node_sim", "target_handle": "design"},
+        {"id": "edge_2", "source": "node_sim", "source_handle": "performance", "target": "node_output", "target_handle": "performance"},
+        {"id": "edge_3", "source": "node_sim", "source_handle": "fields", "target": "node_output", "target_handle": "design"}
+    ]
+}

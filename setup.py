@@ -30,7 +30,7 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/SolomonCaptain/HI-Photonics",
-    license="MIT",
+    license="GNU General Public License v3.0",
     
     # 包发现
     packages=find_packages(exclude=["tests", "tests.*", "examples", "docs"]),
