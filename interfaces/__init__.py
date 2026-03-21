@@ -34,6 +34,55 @@ except ImportError:
     MeepGratingSimulator = None
     Material = None
 
+# Optics FDTD 仿真器（C++ 实现）
+try:
+    from .simulators.optics import (
+        OpticsSimulator,
+        OPTICS_AVAILABLE,
+        create_waveguide_simulator
+    )
+except ImportError:
+    OPTICS_AVAILABLE = False
+    OpticsSimulator = None
+    create_waveguide_simulator = None
+
+# RCWA 仿真器
+try:
+    from .simulators.rcwa import (
+        RCWASimulator,
+        RCWAConfig,
+        RCWA_AVAILABLE
+    )
+except ImportError:
+    RCWA_AVAILABLE = False
+    RCWASimulator = None
+    RCWAConfig = None
+
+# Foundry 接口（可选）
+try:
+    from .foundry.design_rules import (
+        DesignRuleChecker,
+        DesignRule,
+        RuleType,
+        Violation
+    )
+except ImportError:
+    DesignRuleChecker = None
+    DesignRule = None
+    RuleType = None
+    Violation = None
+
+try:
+    from .foundry.gds import (
+        GDSExporter,
+        GDSLayer,
+        GDSConfig
+    )
+except ImportError:
+    GDSExporter = None
+    GDSLayer = None
+    GDSConfig = None
+
 __all__ = [
     # 仿真器基类
     'SimulatorInterface',
@@ -60,4 +109,23 @@ __all__ = [
     'MeepWaveguideSimulator',
     'MeepGratingSimulator',
     'MEEP_AVAILABLE',
+    
+    # Optics 仿真器
+    'OpticsSimulator',
+    'OPTICS_AVAILABLE',
+    'create_waveguide_simulator',
+    
+    # RCWA 仿真器
+    'RCWASimulator',
+    'RCWAConfig',
+    'RCWA_AVAILABLE',
+    
+    # Foundry 接口
+    'DesignRuleChecker',
+    'DesignRule',
+    'RuleType',
+    'Violation',
+    'GDSExporter',
+    'GDSLayer',
+    'GDSConfig',
 ]

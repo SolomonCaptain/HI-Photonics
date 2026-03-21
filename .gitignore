@@ -11,9 +11,14 @@ api/services/__pycache__/
 core/__pycache__/
 core/nodes/__pycache__/
 core/utils/__pycache__/
+data/__pycache__/
+data/loaders/__pycache__/
 examples/__pycache__/
+hi_photonics/__pycache__/
 interfaces/__pycache__/
+interfaces/foundry/__pycache__/
 interfaces/simulators/__pycache__/
+interfaces/simulators/optics/__pycache__/
 tests/test_core/__pycache__/
 tests/test_interfaces/__pycache__/
 tests/test_models/__pycache__/
@@ -24,3 +29,5 @@ models/inverse/__pycache__/
 models/training/__pycache__/
 optimization/__pycache__/
 optimization/constraints/__pycache__/
+optimization/solvers/__pycache__/
+workflows/__pycache__/

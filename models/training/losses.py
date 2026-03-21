@@ -4,7 +4,7 @@
 提供光子学逆向设计专用的损失函数。
 """
 
-from typing import Dict, Optional, List, Union
+from typing import Dict, Optional, List, Union, Any, Tuple, Callable
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

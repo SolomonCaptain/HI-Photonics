@@ -12,7 +12,7 @@
 
 import torch
 import torch.nn.functional as F
-from typing import Optional, Union, Callable, Tuple, List
+from typing import Optional, Union, Callable, Tuple, List, Dict
 from ..node import Node
 from ..utils.typing import TensorLike
 

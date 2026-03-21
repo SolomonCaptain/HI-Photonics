@@ -104,6 +104,24 @@ from models.training.callbacks import (
     get_default_callbacks
 )
 
+# HiLAB 混合逆向设计框架
+from models.inverse.hilab import (
+    # 配置类
+    VAEEncoderConfig,
+    VAEDecoderConfig,
+    VAEConfig,
+    BayesianOptimizerConfig,
+    HiLABConfig,
+    # 核心类
+    VAEEncoder,
+    VAEDecoder,
+    VAE,
+    HiLABEngine,
+    # 工厂函数
+    create_vae_for_challenge,
+    create_hilab_for_challenge
+)
+
 __all__ = [
     # Base classes
     'BaseModel',
@@ -195,5 +213,19 @@ __all__ = [
     'GradientClipping',
     'ProgressBar',
     'CallbackList',
-    'get_default_callbacks'
+    'get_default_callbacks',
+    
+    # HiLAB
+    'VAEEncoderConfig',
+    'VAEDecoderConfig',
+    'VAEConfig',
+    'BayesianOptimizerConfig',
+    'HiLABConfig',
+    'VAEEncoder',
+    'VAEDecoder',
+    'VAE',
+    'BayesianOptimizer',
+    'HiLABEngine',
+    'create_vae_for_challenge',
+    'create_hilab_for_challenge'
 ]

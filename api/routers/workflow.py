@@ -183,3 +183,119 @@ async def delete_workflow(workflow_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Workflow not found")
     del _workflows[workflow_id]
     return {"message": "Workflow deleted"}
+
+
+# ==================== Workflows 模块集成 API ====================
+
+@router.post("/pipeline/create")
+async def create_pipeline(
+    challenge_name: str,
+    model_type: str = "hilab",
+    config: dict = None
+) -> dict:
+    """
+    创建逆向设计管道
+    
+    Args:
+        challenge_name: 挑战名称 (grating_coupler, metagrating, wavelength_demux)
+        model_type: 模型类型 (tnn, mdn, cgan, pinn, hilab)
+        config: 额外配置参数
+    """
+    return await workflow_service.create_pipeline(
+        challenge_name=challenge_name,
+        model_type=model_type,
+        config=config
+    )
+
+
+@router.post("/pipeline/{pipeline_id}/run")
+async def run_pipeline(
+    pipeline_id: str,
+    target_performance: List[float] = None,
+    async_mode: bool = False
+) -> dict:
+    """
+    运行设计管道
+    
+    Args:
+        pipeline_id: 管道 ID
+        target_performance: 目标性能 [效率, 均匀性, 损耗]
+        async_mode: 是否异步执行
+    """
+    return await workflow_service.run_pipeline(
+        pipeline_id=pipeline_id,
+        target_performance=target_performance,
+        async_mode=async_mode
+    )
+
+
+@router.get("/task/{task_id}/status")
+async def get_task_status(task_id: str) -> dict:
+    """获取异步任务状态"""
+    return await workflow_service.get_task_status(task_id)
+
+
+@router.post("/train")
+async def train_model(
+    challenge_name: str,
+    model_type: str = "hilab",
+    training_config: dict = None
+) -> dict:
+    """
+    训练模型
+    
+    Args:
+        challenge_name: 挑战名称
+        model_type: 模型类型
+        training_config: 训练配置
+    """
+    return await workflow_service.train_model(
+        challenge_name=challenge_name,
+        model_type=model_type,
+        training_config=training_config
+    )
+
+
+@router.post("/inverse-design")
+async def inverse_design(
+    challenge_name: str,
+    target_performance: List[float],
+    model_type: str = "hilab",
+    design_config: dict = None
+) -> dict:
+    """
+    逆向设计
+    
+    Args:
+        challenge_name: 挑战名称
+        target_performance: 目标性能
+        model_type: 模型类型
+        design_config: 设计配置
+    """
+    return await workflow_service.inverse_design(
+        challenge_name=challenge_name,
+        target_performance=target_performance,
+        model_type=model_type,
+        design_config=design_config
+    )
+
+
+@router.post("/simulate")
+async def simulate_design(
+    design: list,
+    simulator_type: str = "optics",
+    config: dict = None
+) -> dict:
+    """
+    仿真设计
+    
+    Args:
+        design: 设计参数 [H, W] 或 [H, W, D]
+        simulator_type: 仿真器类型 (optics, meep, rcwa)
+        config: 仿真配置
+    """
+    return await workflow_service.simulate_design(
+        design=design,
+        simulator_type=simulator_type,
+        config=config
+    )

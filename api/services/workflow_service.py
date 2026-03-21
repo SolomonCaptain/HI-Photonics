@@ -1,5 +1,7 @@
 """
 工作流执行服务
+
+整合 workflows 模块提供完整的逆向设计工作流。
 """
 
 import sys
@@ -20,6 +22,12 @@ from api.models.schemas import (
     NodeTypeEnum, DatasetConfig, TrainingConfig, InverseDesignRequest
 )
 
+# 导入 workflows 模块
+from workflows import (
+    DesignPipeline, PipelineConfig,
+    TaskDispatcher, TaskStatus, submit_task, get_task_result
+)
+
 
 class WorkflowService:
     """工作流执行服务"""
@@ -27,6 +35,10 @@ class WorkflowService:
     def __init__(self):
         self.execution_cache: Dict[str, Any] = {}
         self.models: Dict[str, Any] = {}
+        self.dispatcher = TaskDispatcher(max_workers=4)
+        
+        # 缓存管道实例
+        self.pipelines: Dict[str, DesignPipeline] = {}
 
     async def execute_node(
         self, 
@@ -395,6 +407,285 @@ class WorkflowService:
                 break
         
         return results
+    
+    # ==================== Workflows 模块集成 ====================
+    
+    async def create_pipeline(
+        self,
+        challenge_name: str,
+        model_type: str = "hilab",
+        config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        创建逆向设计管道
+        
+        Args:
+            challenge_name: 挑战名称
+            model_type: 模型类型 (tnn, mdn, cgan, pinn, hilab)
+            config: 配置参数
+            
+        Returns:
+            管道信息
+        """
+        config = config or {}
+        
+        # 创建管道配置
+        pipeline_config = PipelineConfig(
+            name=f"api_pipeline_{challenge_name}",
+            challenge_name=challenge_name,
+            model_type=model_type,
+            num_iterations=config.get('iterations', 50),
+            num_epochs=config.get('epochs', 100),
+            batch_size=config.get('batchSize', 32),
+            learning_rate=config.get('learningRate', 1e-3),
+            output_dir=config.get('outputDir', 'outputs'),
+            use_simulation=config.get('useSimulation', True),
+            use_constraints=config.get('useConstraints', True),
+            verbose=config.get('verbose', True)
+        )
+        
+        # 创建管道
+        pipeline = DesignPipeline(config=pipeline_config)
+        
+        # 缓存管道
+        pipeline_id = f"pipeline_{int(time.time() * 1000)}"
+        self.pipelines[pipeline_id] = pipeline
+        
+        return {
+            'pipeline_id': pipeline_id,
+            'challenge': challenge_name,
+            'model_type': model_type,
+            'config': pipeline_config.__dict__,
+            'status': 'created'
+        }
+    
+    async def run_pipeline(
+        self,
+        pipeline_id: str,
+        target_performance: Optional[List[float]] = None,
+        async_mode: bool = False
+    ) -> Dict[str, Any]:
+        """
+        运行设计管道
+        
+        Args:
+            pipeline_id: 管道 ID
+            target_performance: 目标性能
+            async_mode: 是否异步执行
+            
+        Returns:
+            设计结果
+        """
+        if pipeline_id not in self.pipelines:
+            raise ValueError(f"Pipeline not found: {pipeline_id}")
+        
+        pipeline = self.pipelines[pipeline_id]
+        
+        if async_mode:
+            # 异步执行
+            task_id = submit_task(
+                fn=lambda: pipeline.run(
+                    target_performance=target_performance,
+                    return_design=True,
+                    return_history=True
+                ),
+                task_name=f"pipeline_run_{pipeline_id}"
+            )
+            
+            return {
+                'task_id': task_id,
+                'status': 'running',
+                'message': 'Pipeline started in background'
+            }
+        else:
+            # 同步执行
+            result = pipeline.run(
+                target_performance=target_performance,
+                return_design=True,
+                return_history=True
+            )
+            
+            return {
+                'status': 'completed',
+                'design': result.get('design').tolist() if isinstance(result.get('design'), np.ndarray) else result.get('design'),
+                'performance': result.get('performance'),
+                'iterations': result.get('iterations', 0),
+                'train_history': result.get('train_history', {}),
+                'opt_history': result.get('opt_history', {})
+            }
+    
+    async def get_task_status(self, task_id: str) -> Dict[str, Any]:
+        """获取异步任务状态"""
+        status = get_task_result(task_id)
+        
+        if status is None:
+            return {'status': 'not_found', 'task_id': task_id}
+        
+        return {
+            'task_id': task_id,
+            'status': status.status.value,
+            'result': status.result,
+            'error': status.error,
+            'progress': status.progress,
+            'duration': status.duration
+        }
+    
+    async def train_model(
+        self,
+        challenge_name: str,
+        model_type: str,
+        training_config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        训练模型
+        
+        Args:
+            challenge_name: 挑战名称
+            model_type: 模型类型
+            training_config: 训练配置
+            
+        Returns:
+            训练结果
+        """
+        from workflows import DesignPipeline, PipelineConfig
+        
+        config = training_config or {}
+        
+        pipeline_config = PipelineConfig(
+            name=f"train_{challenge_name}_{model_type}",
+            challenge_name=challenge_name,
+            model_type=model_type,
+            num_epochs=config.get('epochs', 100),
+            batch_size=config.get('batchSize', 32),
+            learning_rate=config.get('learningRate', 1e-3),
+            use_simulation=False,  # 仅训练，不仿真
+            verbose=True
+        )
+        
+        pipeline = DesignPipeline(config=pipeline_config)
+        pipeline.setup()
+        
+        # 训练模型
+        history = pipeline.train_model()
+        
+        # 保存模型
+        model_path = pipeline.save_model()
+        
+        return {
+            'status': 'completed',
+            'model_type': model_type,
+            'challenge': challenge_name,
+            'model_path': str(model_path) if model_path else None,
+            'train_loss': history.get('train_loss', [])[-1] if history.get('train_loss') else None,
+            'val_loss': history.get('val_loss', [])[-1] if history.get('val_loss') else None,
+            'epochs_trained': len(history.get('train_loss', []))
+        }
+    
+    async def inverse_design(
+        self,
+        challenge_name: str,
+        target_performance: List[float],
+        model_type: str = "hilab",
+        design_config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        逆向设计
+        
+        Args:
+            challenge_name: 挑战名称
+            target_performance: 目标性能
+            model_type: 模型类型
+            design_config: 设计配置
+            
+        Returns:
+            设计结果
+        """
+        config = design_config or {}
+        
+        # 创建管道
+        pipeline_config = PipelineConfig(
+            name=f"inverse_design_{challenge_name}",
+            challenge_name=challenge_name,
+            model_type=model_type,
+            num_iterations=config.get('iterations', 50),
+            use_simulation=config.get('validate', True),
+            use_constraints=config.get('constraints', True),
+            verbose=True
+        )
+        
+        pipeline = DesignPipeline(config=pipeline_config)
+        pipeline.setup()
+        
+        # 执行逆向设计
+        result = pipeline.inverse_design(
+            target_performance=target_performance,
+            num_iterations=config.get('iterations', 50)
+        )
+        
+        return {
+            'status': 'completed',
+            'design': result['design'].tolist() if isinstance(result['design'], np.ndarray) else result['design'],
+            'predicted_performance': result.get('predicted_performance'),
+            'actual_performance': result.get('actual_performance'),
+            'iterations': result.get('iterations', 0),
+            'optimization_score': result.get('score')
+        }
+    
+    async def simulate_design(
+        self,
+        design: Any,
+        simulator_type: str = "meep",
+        config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        仿真设计
+        
+        Args:
+            design: 设计参数
+            simulator_type: 仿真器类型
+            config: 仿真配置
+            
+        Returns:
+            仿真结果
+        """
+        from interfaces import SimulatorFactory, SimulationConfig
+        from interfaces.simulators.optics import OpticsSimulator
+        
+        config = config or {}
+        
+        # 转换设计
+        if isinstance(design, list):
+            design = np.array(design)
+        
+        # 创建仿真配置
+        sim_config = SimulationConfig(
+            resolution=config.get('resolution', 50),
+            cell_size=tuple(config.get('cellSize', [10.0, 10.0, 0.0])),
+            wavelengths=config.get('wavelengths', [1.55]),
+            simulation_time=config.get('simulationTime', 100.0)
+        )
+        
+        # 选择仿真器
+        if simulator_type == "optics":
+            # 使用自定义 optics 仿真器
+            simulator = OpticsSimulator(config=sim_config)
+        else:
+            # 使用注册的仿真器
+            try:
+                simulator = SimulatorFactory.create(simulator_type, config=sim_config)
+            except ValueError:
+                # 回退到 optics 仿真器
+                simulator = OpticsSimulator(config=sim_config)
+        
+        # 运行仿真
+        result = simulator.run(design)
+        
+        return {
+            'status': 'completed',
+            'flux': {k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in result.flux.items()},
+            'metrics': result.metrics,
+            'fields': {k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in result.fields.items()}
+        }
 
 
 # 全局服务实例

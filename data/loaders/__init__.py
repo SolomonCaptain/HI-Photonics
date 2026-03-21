@@ -1,7 +1,5 @@
 """
-HI-Photonics 数据模块
-
-提供数据加载、生成和预处理功能。
+数据加载器模块
 """
 
 from data.loaders.pipeline import (
@@ -15,16 +13,11 @@ from data.loaders.pipeline import (
 )
 
 __all__ = [
-    # 数据样本和集
     'PhotonicsDataSample',
     'PhotonicsDataset',
     'HDF5Dataset',
     'SyntheticDataset',
-    
-    # 数据增强
     'DataAugmentation',
-    
-    # 数据加载
     'create_dataloaders',
     'save_dataset_to_hdf5',
 ]
