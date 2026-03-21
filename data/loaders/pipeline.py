@@ -4,6 +4,8 @@
 提供用于训练逆向设计模型的数据加载器。
 """
 
+import platform
+import os
 from typing import Dict, Optional, Tuple, List, Union, Any, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +13,31 @@ import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 import numpy as np
 import h5py
+
+
+def get_optimal_num_workers() -> int:
+    """
+    获取最优的数据加载器工作进程数
+    
+    Windows 平台上建议设为 0，避免多进程问题。
+    Linux/macOS 上可以使用多进程加速。
+    """
+    if platform.system() == 'Windows':
+        return 0
+    return min(4, os.cpu_count() // 2 or 1)
+
+
+def setup_windows_multiprocessing():
+    """
+    设置 Windows 平台的多进程策略
+    
+    解决 Windows 上的共享内存问题。
+    """
+    if platform.system() == 'Windows':
+        try:
+            torch.multiprocessing.set_sharing_strategy('file_system')
+        except Exception:
+            pass
 
 
 @dataclass
@@ -310,23 +337,43 @@ def create_dataloaders(
     batch_size: int = 32,
     train_ratio: float = 0.8,
     val_ratio: float = 0.1,
-    num_workers: int = 0,
-    seed: int = 42
+    num_workers: Optional[int] = None,
+    seed: int = 42,
+    pin_memory: Optional[bool] = None,
+    persistent_workers: Optional[bool] = None
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     创建数据加载器
+    
+    自动适配 Windows/Linux/macOS 平台。
     
     Args:
         dataset: 数据集
         batch_size: 批次大小
         train_ratio: 训练集比例
         val_ratio: 验证集比例
-        num_workers: 工作进程数
+        num_workers: 工作进程数（None 为自动检测）
         seed: 随机种子
+        pin_memory: 是否锁定内存（CUDA 时自动启用）
+        persistent_workers: 是否保持工作进程存活
         
     Returns:
         (train_loader, val_loader, test_loader)
     """
+    # Windows 平台优化设置
+    setup_windows_multiprocessing()
+    
+    # 自动检测最优配置
+    if num_workers is None:
+        num_workers = get_optimal_num_workers()
+    
+    if pin_memory is None:
+        pin_memory = torch.cuda.is_available()
+    
+    # Windows 上不支持 persistent_workers
+    if persistent_workers is None:
+        persistent_workers = num_workers > 0 and platform.system() != 'Windows'
+    
     # 划分数据集
     total_size = len(dataset)
     train_size = int(total_size * train_ratio)
@@ -340,29 +387,36 @@ def create_dataloaders(
         generator=generator
     )
     
+    # 数据加载器通用参数
+    loader_kwargs = {
+        'num_workers': num_workers,
+        'pin_memory': pin_memory,
+    }
+    
+    # 仅在支持的平台添加 persistent_workers
+    if persistent_workers and num_workers > 0:
+        loader_kwargs['persistent_workers'] = True
+    
     # 创建数据加载器
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=num_workers,
-        pin_memory=True
+        **loader_kwargs
     )
     
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        pin_memory=True
+        **loader_kwargs
     )
     
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        pin_memory=True
+        **loader_kwargs
     )
     
     return train_loader, val_loader, test_loader

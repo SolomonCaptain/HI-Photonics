@@ -5,11 +5,20 @@
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Tuple, List, Union
+from typing import Dict, Any, Optional, Tuple, List, Union, Literal
 from pathlib import Path
+from datetime import datetime
+import json
 import torch
 import torch.nn as nn
 from dataclasses import dataclass
+
+# safetensors 支持
+try:
+    import safetensors.torch
+    SAFETENSORS_AVAILABLE = True
+except ImportError:
+    SAFETENSORS_AVAILABLE = False
 
 
 @dataclass
@@ -109,49 +118,140 @@ class BaseModel(nn.Module, ABC):
                 'r2': r2.item()
             }
     
-    def save(self, path: Union[str, Path], include_optimizer: bool = False, 
-             optimizer: Optional[torch.optim.Optimizer] = None) -> None:
+    def save(
+        self, 
+        path: Union[str, Path], 
+        format: Literal["torch", "safetensors"] = "torch",
+        include_optimizer: bool = False, 
+        optimizer: Optional[torch.optim.Optimizer] = None
+    ) -> None:
         """
         保存模型
         
         Args:
             path: 保存路径
+            format: 保存格式，'torch' 或 'safetensors'
             include_optimizer: 是否保存优化器状态
             optimizer: 优化器实例
         """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         
-        checkpoint = {
-            'model_state_dict': self.state_dict(),
-            'config': self.config.__dict__ if hasattr(self.config, '__dict__') else {},
-            'training_history': self.training_history
-        }
+        # 准备模型数据
+        state_dict = self.state_dict()
+        config_dict = self.config.__dict__ if hasattr(self.config, '__dict__') else {}
         
-        if include_optimizer and optimizer is not None:
-            checkpoint['optimizer_state_dict'] = optimizer.state_dict()
-        
-        torch.save(checkpoint, path)
+        if format == "safetensors":
+            if not SAFETENSORS_AVAILABLE:
+                raise ImportError("safetensors 库未安装，请运行: pip install safetensors")
+            
+            # 确保路径后缀正确
+            if path.suffix not in ['.safetensors', '.sft']:
+                path = path.with_suffix('.safetensors')
+            
+            # 保存模型权重为 safetensors 格式
+            safetensors.torch.save_file(state_dict, str(path))
+            
+            # 保存元数据为 JSON
+            metadata = {
+                'model_name': self.config.name,
+                'config': config_dict,
+                'training_history': self.training_history,
+                'saved_at': datetime.now().isoformat(),
+                'pytorch_version': torch.__version__,
+            }
+            
+            if include_optimizer and optimizer is not None:
+                # 注意：优化器状态不适合 safetensors，单独保存
+                optimizer_path = path.with_suffix('.optimizer.pt')
+                torch.save(optimizer.state_dict(), optimizer_path)
+                metadata['optimizer_saved'] = str(optimizer_path)
+            
+            metadata_path = path.with_suffix('.json')
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False, default=str)
+        else:
+            # 默认 PyTorch 格式
+            checkpoint = {
+                'model_state_dict': state_dict,
+                'config': config_dict,
+                'training_history': self.training_history
+            }
+            
+            if include_optimizer and optimizer is not None:
+                checkpoint['optimizer_state_dict'] = optimizer.state_dict()
+            
+            torch.save(checkpoint, path)
     
-    def load(self, path: Union[str, Path], optimizer: Optional[torch.optim.Optimizer] = None,
-             strict: bool = True) -> None:
+    def load(
+        self, 
+        path: Union[str, Path], 
+        format: Literal["torch", "safetensors", "auto"] = "auto",
+        optimizer: Optional[torch.optim.Optimizer] = None,
+        strict: bool = True
+    ) -> Dict[str, Any]:
         """
         加载模型
         
         Args:
             path: 模型路径
+            format: 加载格式，'torch', 'safetensors' 或 'auto'（自动检测）
             optimizer: 优化器实例（用于恢复训练）
             strict: 是否严格匹配参数
+            
+        Returns:
+            加载的元数据字典
         """
-        checkpoint = torch.load(path, map_location=self.device)
+        path = Path(path)
+        metadata = {}
         
-        self.load_state_dict(checkpoint['model_state_dict'], strict=strict)
+        # 自动检测格式
+        if format == "auto":
+            if path.suffix in ['.safetensors', '.sft']:
+                format = "safetensors"
+            else:
+                format = "torch"
         
-        if 'training_history' in checkpoint:
-            self.training_history = checkpoint['training_history']
+        if format == "safetensors":
+            if not SAFETENSORS_AVAILABLE:
+                raise ImportError("safetensors 库未安装，请运行: pip install safetensors")
+            
+            # 加载 safetensors 权重
+            state_dict = safetensors.torch.load_file(str(path))
+            self.load_state_dict(state_dict, strict=strict)
+            
+            # 加载元数据
+            metadata_path = path.with_suffix('.json')
+            if metadata_path.exists():
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                
+                # 恢复训练历史
+                if 'training_history' in metadata:
+                    self.training_history = metadata['training_history']
+                
+                # 加载优化器状态
+                if optimizer is not None and 'optimizer_saved' in metadata:
+                    optimizer_path = Path(metadata['optimizer_saved'])
+                    if optimizer_path.exists():
+                        optimizer.load_state_dict(torch.load(optimizer_path, map_location=self.device))
+        else:
+            # 加载 PyTorch 格式
+            checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+            
+            self.load_state_dict(checkpoint['model_state_dict'], strict=strict)
+            
+            if 'training_history' in checkpoint:
+                self.training_history = checkpoint['training_history']
+                metadata['training_history'] = checkpoint['training_history']
+            
+            if optimizer is not None and 'optimizer_state_dict' in checkpoint:
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            
+            if 'config' in checkpoint:
+                metadata['config'] = checkpoint['config']
         
-        if optimizer is not None and 'optimizer_state_dict' in checkpoint:
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        return metadata
     
     def count_parameters(self) -> int:
         """计算可训练参数数量"""

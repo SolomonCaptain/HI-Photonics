@@ -47,6 +47,7 @@ setup(
         "h5py>=3.0",
         "tqdm>=4.60",
         "pyyaml>=6.0",
+        "safetensors>=0.4.0",
     ],
     
     # 可选依赖

@@ -12,6 +12,17 @@ from models.base import (
     GenerativeModel
 )
 
+# Safetensor 工具
+from models.safetensor_utils import (
+    check_safetensors_available,
+    convert_torch_to_safetensors,
+    convert_safetensors_to_torch,
+    load_safetensors_metadata,
+    get_safetensors_info,
+    batch_convert_to_safetensors,
+    validate_safetensors_file
+)
+
 from models.inverse.tnn import (
     TandemNetwork,
     TandemNetworkConfig,
@@ -129,6 +140,15 @@ __all__ = [
     'SurrogateModel',
     'InverseModel',
     'GenerativeModel',
+    
+    # Safetensor utilities
+    'check_safetensors_available',
+    'convert_torch_to_safetensors',
+    'convert_safetensors_to_torch',
+    'load_safetensors_metadata',
+    'get_safetensors_info',
+    'batch_convert_to_safetensors',
+    'validate_safetensors_file',
     
     # TNN
     'TandemNetwork',
