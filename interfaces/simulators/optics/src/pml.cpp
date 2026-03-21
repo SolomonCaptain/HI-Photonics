@@ -112,22 +112,22 @@ bool PML::in_pml_z(int k) const {
 void PML::update_E(Fields& fields) {
     // 简化的 PML 更新：在 PML 区域应用衰减
     // 完整的 CPML 实现更复杂，这里使用简化版本
-    
+
     Float dt = grid_.dt();
-    
+
     int nx = grid_.nx();
     int ny = grid_.ny();
-    
+
     // 对 PML 区域内的场应用衰减
     if (fields.Ez()) {
-        auto& Ez = fields.Ez();
+        FieldArray* Ez = fields.Ez();
         for (int j = 0; j < ny; ++j) {
             for (int i = 0; i < nx; ++i) {
                 Float sigma_x = params_x_.sigma_e[i];
                 Float sigma_y = params_y_.sigma_e[j];
                 Float kappa_x = params_x_.kappa_e[i];
                 Float kappa_y = params_y_.kappa_e[j];
-                
+
                 if (sigma_x > 0 || sigma_y > 0) {
                     // 指数衰减
                     Float decay_x = std::exp(-sigma_x * dt / kappa_x);
@@ -141,18 +141,18 @@ void PML::update_E(Fields& fields) {
 
 void PML::update_H(Fields& fields) {
     Float dt = grid_.dt();
-    
+
     int nx = grid_.nx();
     int ny = grid_.ny();
-    
+
     // 对 PML 区域内的磁场应用衰减
     if (fields.Hx()) {
-        auto& Hx = fields.Hx();
+        FieldArray* Hx = fields.Hx();
         for (int j = 0; j < ny; ++j) {
             for (int i = 0; i < nx; ++i) {
                 Float sigma_y = params_y_.sigma_m[j];
                 Float kappa_y = params_y_.kappa_m[j];
-                
+
                 if (sigma_y > 0) {
                     Float decay = std::exp(-sigma_y * dt / kappa_y);
                     (*Hx)(i, j) *= decay;
@@ -160,14 +160,14 @@ void PML::update_H(Fields& fields) {
             }
         }
     }
-    
+
     if (fields.Hy()) {
-        auto& Hy = fields.Hy();
+        FieldArray* Hy = fields.Hy();
         for (int j = 0; j < ny; ++j) {
             for (int i = 0; i < nx; ++i) {
                 Float sigma_x = params_x_.sigma_m[i];
                 Float kappa_x = params_x_.kappa_m[i];
-                
+
                 if (sigma_x > 0) {
                     Float decay = std::exp(-sigma_x * dt / kappa_x);
                     (*Hy)(i, j) *= decay;
@@ -249,10 +249,10 @@ void BoundaryManager::apply_pec_E(Fields& fields) {
     // PEC: 电场切向分量为零
     int nx = grid_.nx();
     int ny = grid_.ny();
-    
+
     if (fields.Ez()) {
-        auto& Ez = fields.Ez();
-        
+        FieldArray* Ez = fields.Ez();
+
         // x 边界
         if (boundary_x_.type == BoundaryType::PEC) {
             for (int j = 0; j < ny; ++j) {
@@ -260,7 +260,7 @@ void BoundaryManager::apply_pec_E(Fields& fields) {
                 (*Ez)(nx - 1, j) = 0.0;
             }
         }
-        
+
         // y 边界
         if (boundary_y_.type == BoundaryType::PEC) {
             for (int i = 0; i < nx; ++i) {
@@ -275,23 +275,25 @@ void BoundaryManager::apply_pmc_H(Fields& fields) {
     // PMC: 磁场切向分量为零
     int nx = grid_.nx();
     int ny = grid_.ny();
-    
+
     // x 边界
     if (boundary_x_.type == BoundaryType::PMC) {
         if (fields.Hy()) {
+            FieldArray* Hy = fields.Hy();
             for (int j = 0; j < ny; ++j) {
-                (*fields.Hy())(0, j) = 0.0;
-                (*fields.Hy())(nx - 1, j) = 0.0;
+                (*Hy)(0, j) = 0.0;
+                (*Hy)(nx - 1, j) = 0.0;
             }
         }
     }
-    
+
     // y 边界
     if (boundary_y_.type == BoundaryType::PMC) {
         if (fields.Hx()) {
+            FieldArray* Hx = fields.Hx();
             for (int i = 0; i < nx; ++i) {
-                (*fields.Hx())(i, 0) = 0.0;
-                (*fields.Hx())(i, ny - 1) = 0.0;
+                (*Hx)(i, 0) = 0.0;
+                (*Hx)(i, ny - 1) = 0.0;
             }
         }
     }
@@ -300,10 +302,10 @@ void BoundaryManager::apply_pmc_H(Fields& fields) {
 void BoundaryManager::apply_periodic_E(Fields& fields) {
     int nx = grid_.nx();
     int ny = grid_.ny();
-    
+
     if (fields.Ez()) {
-        auto& Ez = fields.Ez();
-        
+        FieldArray* Ez = fields.Ez();
+
         // x 方向周期
         if (boundary_x_.type == BoundaryType::PERIODIC) {
             for (int j = 0; j < ny; ++j) {
@@ -311,7 +313,7 @@ void BoundaryManager::apply_periodic_E(Fields& fields) {
                 (*Ez)(nx - 1, j) = (*Ez)(1, j);
             }
         }
-        
+
         // y 方向周期
         if (boundary_y_.type == BoundaryType::PERIODIC) {
             for (int i = 0; i < nx; ++i) {
@@ -325,10 +327,10 @@ void BoundaryManager::apply_periodic_E(Fields& fields) {
 void BoundaryManager::apply_periodic_H(Fields& fields) {
     int nx = grid_.nx();
     int ny = grid_.ny();
-    
+
     if (fields.Hx()) {
-        auto& Hx = fields.Hx();
-        
+        FieldArray* Hx = fields.Hx();
+
         if (boundary_y_.type == BoundaryType::PERIODIC) {
             for (int i = 0; i < nx; ++i) {
                 (*Hx)(i, 0) = (*Hx)(i, ny - 2);
@@ -336,10 +338,10 @@ void BoundaryManager::apply_periodic_H(Fields& fields) {
             }
         }
     }
-    
+
     if (fields.Hy()) {
-        auto& Hy = fields.Hy();
-        
+        FieldArray* Hy = fields.Hy();
+
         if (boundary_x_.type == BoundaryType::PERIODIC) {
             for (int j = 0; j < ny; ++j) {
                 (*Hy)(0, j) = (*Hy)(nx - 2, j);

@@ -27,7 +27,7 @@ pybind11_add_module(optics ${SOURCES})
 
 # 编译选项
 if(MSVC)
-    target_compile_options(optics PRIVATE /O2 /openmp)
+    target_compile_options(optics PRIVATE /O2 /openmp /utf-8)
 else()
     target_compile_options(optics PRIVATE -O3 -fopenmp)
 endif()

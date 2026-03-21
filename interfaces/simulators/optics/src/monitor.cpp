@@ -79,35 +79,39 @@ Float FluxMonitor::compute_instantaneous_flux(const Fields& fields) const {
     // 对于 2D TM 模式（Ez, Hx, Hy）：
     // Poynting 矢量的 y 分量：Sy = -Ez * Hx
     // Poynting 矢量的 x 分量：Sx = Ez * Hy
-    
+
     if (!fields.Ez()) return 0.0;
-    
+
     const Grid& grid = fields.grid();
     Float dx = grid.dx();
     Float dy = grid.dy();
-    
+
     Float total_flux = 0.0;
-    
+
     // 确定监视器区域
     int i_start = std::max(0, static_cast<int>((center_.x - size_.x * 0.5) / dx));
     int i_end = std::min(grid.nx() - 1, static_cast<int>((center_.x + size_.x * 0.5) / dx));
     int j_start = std::max(0, static_cast<int>((center_.y - size_.y * 0.5) / dy));
     int j_end = std::min(grid.ny() - 1, static_cast<int>((center_.y + size_.y * 0.5) / dy));
-    
+
+    const FieldArray* Ez = fields.Ez();
+    const FieldArray* Hy = fields.Hy();
+    const FieldArray* Hx = fields.Hx();
+
     // 计算通量积分
     // 假设监视器是 y 方向的平面（测量 x 方向的通量）
     for (int j = j_start; j <= j_end; ++j) {
         int i = (i_start + i_end) / 2;  // 取中间位置
-        
-        Float Ez_val = (*fields.Ez())(i, j);
-        Float Hy_val = fields.Hy() ? (*fields.Hy())(i, j) : 0.0;
-        Float Hx_val = fields.Hx() ? (*fields.Hx())(i, j) : 0.0;
-        
+
+        Float Ez_val = (*Ez)(i, j);
+        Float Hy_val = Hy ? (*Hy)(i, j) : 0.0;
+        Float Hx_val = Hx ? (*Hx)(i, j) : 0.0;
+
         // Sx = Ez * Hy (x 方向通量)
         // Sy = -Ez * Hx (y 方向通量)
         total_flux += Ez_val * Hy_val * dy;
     }
-    
+
     return total_flux;
 }
 
@@ -168,12 +172,12 @@ void FieldMonitor::update(const Fields& fields, Float t) {
     // 获取场数据指针
     const FieldArray* field_ptr = nullptr;
     switch (component_) {
-        case FieldComponent::Ex: field_ptr = fields.Ex().get(); break;
-        case FieldComponent::Ey: field_ptr = fields.Ey().get(); break;
-        case FieldComponent::Ez: field_ptr = fields.Ez().get(); break;
-        case FieldComponent::Hx: field_ptr = fields.Hx().get(); break;
-        case FieldComponent::Hy: field_ptr = fields.Hy().get(); break;
-        case FieldComponent::Hz: field_ptr = fields.Hz().get(); break;
+        case FieldComponent::Ex: field_ptr = fields.Ex(); break;
+        case FieldComponent::Ey: field_ptr = fields.Ey(); break;
+        case FieldComponent::Ez: field_ptr = fields.Ez(); break;
+        case FieldComponent::Hx: field_ptr = fields.Hx(); break;
+        case FieldComponent::Hy: field_ptr = fields.Hy(); break;
+        case FieldComponent::Hz: field_ptr = fields.Hz(); break;
         default: return;
     }
     
@@ -248,56 +252,61 @@ void EnergyMonitor::reset() {
 Float EnergyMonitor::compute_electric_energy(const Fields& fields) const {
     // U_e = 0.5 * eps * |E|^2
     Float energy = 0.0;
-    
+
     const Grid& grid = fields.grid();
     Float dx = grid.dx();
     Float dy = grid.dy();
     Float dv = dx * dy;  // 单元面积
-    
+
     int i_start = std::max(0, static_cast<int>((center_.x - size_.x * 0.5) / dx));
     int i_end = std::min(grid.nx() - 1, static_cast<int>((center_.x + size_.x * 0.5) / dx));
     int j_start = std::max(0, static_cast<int>((center_.y - size_.y * 0.5) / dy));
     int j_end = std::min(grid.ny() - 1, static_cast<int>((center_.y + size_.y * 0.5) / dy));
-    
+
     if (fields.Ez()) {
+        const FieldArray* Ez = fields.Ez();
         for (int j = j_start; j <= j_end; ++j) {
             for (int i = i_start; i <= i_end; ++i) {
-                Float E = (*fields.Ez())(i, j);
+                Float E = (*Ez)(i, j);
                 Float eps = fields.epsilon()(i, j);
                 energy += 0.5 * eps * E * E * dv;
             }
         }
     }
-    
+
     return energy;
 }
 
 Float EnergyMonitor::compute_magnetic_energy(const Fields& fields) const {
     // U_m = 0.5 * mu * |H|^2
     Float energy = 0.0;
-    
+
     const Grid& grid = fields.grid();
     Float dx = grid.dx();
     Float dy = grid.dy();
     Float dv = dx * dy;
-    
+
     int i_start = std::max(0, static_cast<int>((center_.x - size_.x * 0.5) / dx));
     int i_end = std::min(grid.nx() - 1, static_cast<int>((center_.x + size_.x * 0.5) / dx));
     int j_start = std::max(0, static_cast<int>((center_.y - size_.y * 0.5) / dy));
     int j_end = std::min(grid.ny() - 1, static_cast<int>((center_.y + size_.y * 0.5) / dy));
-    
+
+    const FieldArray* Hx = fields.Hx();
+    const FieldArray* Hy = fields.Hy();
+    const FieldArray* Hz = fields.Hz();
+
     for (int j = j_start; j <= j_end; ++j) {
         for (int i = i_start; i <= i_end; ++i) {
             Float H_sq = 0.0;
-            if (fields.Hx()) H_sq += (*fields.Hx())(i, j) * (*fields.Hx())(i, j);
-            if (fields.Hy()) H_sq += (*fields.Hy())(i, j) * (*fields.Hy())(i, j);
-            if (fields.Hz()) H_sq += (*fields.Hz())(i, j) * (*fields.Hz())(i, j);
-            
+            if (Hx) H_sq += (*Hx)(i, j) * (*Hx)(i, j);
+            if (Hy) H_sq += (*Hy)(i, j) * (*Hy)(i, j);
+            if (Hz) H_sq += (*Hz)(i, j) * (*Hz)(i, j);
+
             Float mu = fields.mu()(i, j);
             energy += 0.5 * mu * H_sq * dv;
         }
     }
-    
+
     return energy;
 }
 

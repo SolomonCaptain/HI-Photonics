@@ -70,22 +70,23 @@ Float GaussianSource::amplitude(Float t, Float dt) const {
 
 void GaussianSource::apply(Fields& fields, Float t, Float dt) {
     Float amp = amplitude(t, dt);
-    
+
     if (!fields.Ez()) return;
-    
+
     const Grid& grid = fields.grid();
     Float dx = grid.dx();
     Float dy = grid.dy();
-    
+
     // 遍历光源区域
     int i_start = std::max(0, static_cast<int>((center_.x - size_.x * 0.5) / dx));
     int i_end = std::min(grid.nx() - 1, static_cast<int>((center_.x + size_.x * 0.5) / dx));
     int j_start = std::max(0, static_cast<int>((center_.y - size_.y * 0.5) / dy));
     int j_end = std::min(grid.ny() - 1, static_cast<int>((center_.y + size_.y * 0.5) / dy));
-    
+
+    FieldArray* Ez = fields.Ez();
     for (int j = j_start; j <= j_end; ++j) {
         for (int i = i_start; i <= i_end; ++i) {
-            (*fields.Ez())(i, j) += amp * dt;
+            (*Ez)(i, j) += amp * dt;
         }
     }
 }
@@ -111,21 +112,22 @@ Float ContinuousSource::amplitude(Float t, Float dt) const {
 
 void ContinuousSource::apply(Fields& fields, Float t, Float dt) {
     Float amp = amplitude(t, dt);
-    
+
     if (!fields.Ez()) return;
-    
+
     const Grid& grid = fields.grid();
     Float dx = grid.dx();
     Float dy = grid.dy();
-    
+
     int i_start = std::max(0, static_cast<int>((center_.x - size_.x * 0.5) / dx));
     int i_end = std::min(grid.nx() - 1, static_cast<int>((center_.x + size_.x * 0.5) / dx));
     int j_start = std::max(0, static_cast<int>((center_.y - size_.y * 0.5) / dy));
     int j_end = std::min(grid.ny() - 1, static_cast<int>((center_.y + size_.y * 0.5) / dy));
-    
+
+    FieldArray* Ez = fields.Ez();
     for (int j = j_start; j <= j_end; ++j) {
         for (int i = i_start; i <= i_end; ++i) {
-            (*fields.Ez())(i, j) += amp * dt;
+            (*Ez)(i, j) += amp * dt;
         }
     }
 }
@@ -159,32 +161,33 @@ Float PlaneWaveSource::amplitude(Float t, Float dt) const {
 
 void PlaneWaveSource::apply(Fields& fields, Float t, Float dt) {
     Float amp = amplitude(t, dt);
-    
+
     if (!fields.Ez()) return;
-    
+
     const Grid& grid = fields.grid();
     Float dx = grid.dx();
     Float dy = grid.dy();
-    
+
     // 计算波矢方向
     Float kx = 2.0 * M_PI * frequency_ * std::sin(angle_rad_);
     Float ky = 2.0 * M_PI * frequency_ * std::cos(angle_rad_);
-    
+
     int i_start = std::max(0, static_cast<int>((center_.x - size_.x * 0.5) / dx));
     int i_end = std::min(grid.nx() - 1, static_cast<int>((center_.x + size_.x * 0.5) / dx));
     int j_start = std::max(0, static_cast<int>((center_.y - size_.y * 0.5) / dy));
     int j_end = std::min(grid.ny() - 1, static_cast<int>((center_.y + size_.y * 0.5) / dy));
-    
+
+    FieldArray* Ez = fields.Ez();
     for (int j = j_start; j <= j_end; ++j) {
         for (int i = i_start; i <= i_end; ++i) {
             Float x = i * dx;
             Float y = j * dy;
-            
+
             // 添加相位因子
             Float phase = kx * (x - center_.x) + ky * (y - center_.y);
             Float value = amp * std::cos(phase);
-            
-            (*fields.Ez())(i, j) += value * dt;
+
+            (*Ez)(i, j) += value * dt;
         }
     }
 }
@@ -212,18 +215,18 @@ Float DipoleSource::amplitude(Float t, Float dt) const {
 
 void DipoleSource::apply(Fields& fields, Float t, Float dt) {
     Float amp = amplitude(t, dt);
-    
+
     const Grid& grid = fields.grid();
     Float dx = grid.dx();
     Float dy = grid.dy();
-    
+
     // 找到最近网格点
     int i = static_cast<int>(center_.x / dx);
     int j = static_cast<int>(center_.y / dy);
-    
+
     i = std::max(0, std::min(grid.nx() - 1, i));
     j = std::max(0, std::min(grid.ny() - 1, j));
-    
+
     // 根据分量类型设置场值
     switch (component_) {
         case FieldComponent::Ex:

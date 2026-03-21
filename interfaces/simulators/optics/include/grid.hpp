@@ -151,20 +151,20 @@ class Fields {
 public:
     Fields(const Grid& grid, Polarization pol = Polarization::TM);
     
-    // 场分量访问
-    FieldArray& Ex() { return *Ex_; }
-    FieldArray& Ey() { return *Ey_; }
-    FieldArray& Ez() { return *Ez_; }
-    FieldArray& Hx() { return *Hx_; }
-    FieldArray& Hy() { return *Hy_; }
-    FieldArray& Hz() { return *Hz_; }
+    // 场分量访问（返回指针，可检查是否存在）
+    FieldArray* Ex() { return Ex_.get(); }
+    FieldArray* Ey() { return Ey_.get(); }
+    FieldArray* Ez() { return Ez_.get(); }
+    FieldArray* Hx() { return Hx_.get(); }
+    FieldArray* Hy() { return Hy_.get(); }
+    FieldArray* Hz() { return Hz_.get(); }
     
-    const FieldArray& Ex() const { return *Ex_; }
-    const FieldArray& Ey() const { return *Ey_; }
-    const FieldArray& Ez() const { return *Ez_; }
-    const FieldArray& Hx() const { return *Hx_; }
-    const FieldArray& Hy() const { return *Hy_; }
-    const FieldArray& Hz() const { return *Hz_; }
+    const FieldArray* Ex() const { return Ex_.get(); }
+    const FieldArray* Ey() const { return Ey_.get(); }
+    const FieldArray* Ez() const { return Ez_.get(); }
+    const FieldArray* Hx() const { return Hx_.get(); }
+    const FieldArray* Hy() const { return Hy_.get(); }
+    const FieldArray* Hz() const { return Hz_.get(); }
     
     // 材料参数
     FieldArray& epsilon() { return epsilon_; }

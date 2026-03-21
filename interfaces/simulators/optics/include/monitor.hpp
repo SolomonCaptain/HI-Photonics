@@ -6,6 +6,7 @@
 #include <complex>
 #include <memory>
 #include <functional>
+#include <map>
 
 namespace optics {
 

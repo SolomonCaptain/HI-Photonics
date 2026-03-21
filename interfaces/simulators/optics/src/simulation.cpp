@@ -290,27 +290,27 @@ void FDTDSimulation::step() {
 void FDTDSimulation::update_E() {
     // TM 模式：Ez, Hx, Hy
     // Ez(i,j) = ca * Ez(i,j) + cb * (Hy(i,j) - Hy(i-1,j) - Hx(i,j) + Hx(i,j-1))
-    
+
     if (polarization_ == Polarization::TM) {
-        auto& Ez = fields_->Ez();
-        auto& Hx = fields_->Hx();
-        auto& Hy = fields_->Hy();
-        
+        FieldArray* Ez = fields_->Ez();
+        FieldArray* Hx = fields_->Hx();
+        FieldArray* Hy = fields_->Hy();
+
         if (!Ez || !Hx || !Hy) return;
-        
+
         int nx = grid_->nx();
         int ny = grid_->ny();
-        
+
         // 使用内部区域
         int i_start = grid_->inner_x_start() + 1;
         int i_end = grid_->inner_x_end() - 1;
         int j_start = grid_->inner_y_start() + 1;
         int j_end = grid_->inner_y_end() - 1;
-        
+
         for (int j = j_start; j < j_end; ++j) {
             for (int i = i_start; i < i_end; ++i) {
                 Float curl = (*Hy)(i, j) - (*Hy)(i - 1, j) - (*Hx)(i, j) + (*Hx)(i, j - 1);
-                (*Ez)(i, j) = fields_->ca()(i, j) * (*Ez)(i, j) + 
+                (*Ez)(i, j) = fields_->ca()(i, j) * (*Ez)(i, j) +
                               fields_->cb()(i, j) * curl;
             }
         }
@@ -322,22 +322,22 @@ void FDTDSimulation::update_H() {
     // TM 模式：
     // Hx(i,j) = da * Hx(i,j) + db * (-Ez(i,j+1) + Ez(i,j))
     // Hy(i,j) = da * Hy(i,j) + db * (Ez(i+1,j) - Ez(i,j))
-    
+
     if (polarization_ == Polarization::TM) {
-        auto& Ez = fields_->Ez();
-        auto& Hx = fields_->Hx();
-        auto& Hy = fields_->Hy();
-        
+        FieldArray* Ez = fields_->Ez();
+        FieldArray* Hx = fields_->Hx();
+        FieldArray* Hy = fields_->Hy();
+
         if (!Ez || !Hx || !Hy) return;
-        
+
         int nx = grid_->nx();
         int ny = grid_->ny();
-        
+
         int i_start = grid_->inner_x_start();
         int i_end = grid_->inner_x_end();
         int j_start = grid_->inner_y_start();
         int j_end = grid_->inner_y_end();
-        
+
         for (int j = j_start; j < j_end; ++j) {
             for (int i = i_start; i < i_end; ++i) {
                 // Hx
@@ -346,7 +346,7 @@ void FDTDSimulation::update_H() {
                     (*Hx)(i, j) = fields_->da()(i, j) * (*Hx)(i, j) +
                                   fields_->db()(i, j) * curl;
                 }
-                
+
                 // Hy
                 if (i < nx - 1) {
                     Float curl = (*Ez)(i + 1, j) - (*Ez)(i, j);

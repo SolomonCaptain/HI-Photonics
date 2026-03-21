@@ -1,9 +1,12 @@
 #pragma once
 
+// 在 MSVC 上启用数学常量 (M_PI 等)
+#define _USE_MATH_DEFINES
+#include <cmath>
+
 #include <vector>
 #include <array>
 #include <complex>
-#include <cmath>
 #include <stdexcept>
 #include <memory>
 #include <functional>
