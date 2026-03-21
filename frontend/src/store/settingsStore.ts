@@ -31,7 +31,7 @@ export const useSettingsStore = create<SettingsState>()(
     persist(
         (set) => ({
             // API 设置
-            apiUrl: 'http://localhost:8000',
+            apiUrl: 'http://localhost:8080',
             setApiUrl: (url) => set({ apiUrl: url }),
 
             // 主题设置

@@ -4,6 +4,10 @@
 
 .vscode/
 
+api/__pycache__/
+api/models/__pycache__/
+api/routers/__pycache__/
+api/services/__pycache__/
 core/__pycache__/
 core/nodes/__pycache__/
 core/utils/__pycache__/

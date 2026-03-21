@@ -14,6 +14,10 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+# 添加 api 目录到路径，确保相对导入正常工作
+api_dir = Path(__file__).parent
+sys.path.insert(0, str(api_dir))
+
 from api.routers import workflow_router, models_router
 
 
@@ -97,7 +101,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8080,
         reload=True,
         log_level="info"
     )
