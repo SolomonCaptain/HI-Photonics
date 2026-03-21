@@ -110,3 +110,59 @@ export interface ExecutionResult {
     error?: string;
     duration: number;
 }
+
+// 侧边栏面板类型
+export const SidebarPanelType = {
+    ASSETS: 'assets',
+    NODES: 'nodes',
+    MODELS: 'models',
+    WORKFLOWS: 'workflows',
+    TEMPLATES: 'templates',
+} as const;
+
+export type SidebarPanelType = typeof SidebarPanelType[keyof typeof SidebarPanelType];
+
+// 侧边栏面板信息
+export interface SidebarPanelInfo {
+    type: SidebarPanelType;
+    name: string;
+    icon: string;
+    description: string;
+}
+
+// 资产类型
+export const AssetType = {
+    SPECTRUM: 'spectrum',       // 光谱图
+    GDS: 'gds',                 // GDS版图
+    STRUCTURE: 'structure',     // 结构设计
+    FIELD: 'field',             // 场分布
+    DATASET: 'dataset',         // 数据集
+    MODEL_WEIGHTS: 'model_weights', // 模型权重
+} as const;
+
+export type AssetType = typeof AssetType[keyof typeof AssetType];
+
+// 资产实例
+export interface Asset {
+    id: string;
+    name: string;
+    type: AssetType;
+    description?: string;
+    createdAt: string;
+    updatedAt: string;
+    size?: number;
+    metadata?: Record<string, any>;
+    thumbnail?: string;
+}
+
+// 模板类型
+export interface WorkflowTemplate {
+    id: string;
+    name: string;
+    description: string;
+    category: string;
+    icon: string;
+    nodes: NodeInstance[];
+    edges: NodeConnection[];
+    tags?: string[];
+}

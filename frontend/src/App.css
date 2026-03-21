@@ -10,3 +10,26 @@
   flex: 1;
   overflow: hidden;
 }
+
+/* 侧边栏过渡动画 */
+.sidebar-panel-enter {
+  opacity: 0;
+  transform: translateX(-10px);
+}
+
+.sidebar-panel-enter-active {
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+}
+
+.sidebar-panel-exit {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.sidebar-panel-exit-active {
+  opacity: 0;
+  transform: translateX(-10px);
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+}

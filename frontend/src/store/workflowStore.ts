@@ -9,7 +9,8 @@ import type {
     NodeConnection,
     NodeDefinition
 } from '../types';
-import { NodeType } from '../types';
+import { NodeType, SidebarPanelType } from '../types';
+import type { SidebarPanelType as SidebarPanelTypeType } from '../types';
 
 // 节点定义注册表
 export const NODE_DEFINITIONS: Record<NodeType, NodeDefinition> = {
@@ -271,6 +272,7 @@ interface WorkflowState {
     // UI 状态
     sidebarOpen: boolean;
     propertiesOpen: boolean;
+    currentPanel: SidebarPanelTypeType;
 
     // Actions
     addNode: (type: NodeType, position: { x: number; y: number }) => void;
@@ -289,6 +291,8 @@ interface WorkflowState {
 
     setSidebarOpen: (open: boolean) => void;
     setPropertiesOpen: (open: boolean) => void;
+    setCurrentPanel: (panel: SidebarPanelTypeType) => void;
+    togglePanel: (panel: SidebarPanelTypeType) => void;
 
     clearWorkflow: () => void;
     loadWorkflow: (nodes: NodeInstance[], edges: NodeConnection[]) => void;
@@ -305,6 +309,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     executionResults: {},
     sidebarOpen: true,
     propertiesOpen: true,
+    currentPanel: SidebarPanelType.NODES,
 
     addNode: (type, position) => {
         const definition = NODE_DEFINITIONS[type];
@@ -402,6 +407,17 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
     setSidebarOpen: (open) => set({ sidebarOpen: open }),
     setPropertiesOpen: (open) => set({ propertiesOpen: open }),
+    setCurrentPanel: (panel) => set({ currentPanel: panel }),
+    togglePanel: (panel) => {
+        const { currentPanel, sidebarOpen } = get();
+        if (currentPanel === panel && sidebarOpen) {
+            // 如果点击的是当前已打开的面板，则关闭侧边栏
+            set({ sidebarOpen: false });
+        } else {
+            // 否则打开侧边栏并切换到对应面板
+            set({ currentPanel: panel, sidebarOpen: true });
+        }
+    },
 
     clearWorkflow: () => {
         set({ nodes: [], edges: [], selectedNodeId: null, executionResults: {} });

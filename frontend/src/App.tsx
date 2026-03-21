@@ -7,7 +7,7 @@ import React from 'react';
 import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 import { Toaster } from 'react-hot-toast';
 import { Header, WorkflowCanvas } from './components';
-import { NodeSidebar, PropertiesPanel } from './components/panels';
+import { MainSidebar, PropertiesPanel } from './components/panels';
 import './App.css'; // 引入样式文件
 
 // 创建暗色主题
@@ -75,7 +75,7 @@ const App: React.FC = () => {
       <div className="app-container">
         <Header />
         <div className="main-content">
-          <NodeSidebar />
+          <MainSidebar />
           <WorkflowCanvas />
           <PropertiesPanel />
         </div>
