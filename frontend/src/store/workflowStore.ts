@@ -11,6 +11,8 @@ import type {
 } from '../types';
 import { NodeType, SidebarPanelType } from '../types';
 import type { SidebarPanelType as SidebarPanelTypeType } from '../types';
+import { workflowApi } from '../utils/api';
+import toast from 'react-hot-toast';
 
 // 节点定义注册表
 export const NODE_DEFINITIONS: Record<NodeType, NodeDefinition> = {
@@ -268,6 +270,8 @@ interface WorkflowState {
     // 执行状态
     isExecuting: boolean;
     executionResults: Record<string, any>;
+    executionError: string | null;
+    currentExecutingNodeId: string | null;
 
     // UI 状态
     sidebarOpen: boolean;
@@ -288,6 +292,7 @@ interface WorkflowState {
 
     executeNode: (id: string) => Promise<void>;
     executeAll: () => Promise<void>;
+    updateNodeStatus: (id: string, status: 'idle' | 'running' | 'success' | 'error', result?: any, error?: string) => void;
 
     setSidebarOpen: (open: boolean) => void;
     setPropertiesOpen: (open: boolean) => void;
@@ -307,6 +312,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     selectedNodeId: null,
     isExecuting: false,
     executionResults: {},
+    executionError: null,
+    currentExecutingNodeId: null,
     sidebarOpen: true,
     propertiesOpen: true,
     currentPanel: SidebarPanelType.NODES,
@@ -374,35 +381,132 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     setNodes: (nodes) => set({ nodes }),
     setEdges: (edges) => set({ edges }),
 
-    executeNode: async (id) => {
-        set(state => ({
-            nodes: state.nodes.map(n =>
-                n.id === id ? { ...n, data: { ...n.data, status: 'running' } } : n
-            )
-        }));
-
-        // 模拟执行
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
+    updateNodeStatus: (id, status, result?, error?) => {
         set(state => ({
             nodes: state.nodes.map(n =>
                 n.id === id
-                    ? { ...n, data: { ...n.data, status: 'success', progress: 100 } }
+                    ? {
+                        ...n,
+                        data: {
+                            ...n.data,
+                            status,
+                            result: result || n.data.result,
+                            error: error || n.data.error
+                        }
+                    }
                     : n
-            )
+            ),
+            executionResults: result
+                ? { ...state.executionResults, [id]: result }
+                : state.executionResults
         }));
     },
 
-    executeAll: async () => {
-        set({ isExecuting: true });
-        const { nodes, executeNode } = get();
+    executeNode: async (id) => {
+        const { nodes, edges, updateNodeStatus } = get();
+        const node = nodes.find(n => n.id === id);
 
-        // 拓扑排序后顺序执行
-        for (const node of nodes) {
-            await executeNode(node.id);
+        if (!node) return;
+
+        // 设置为运行中状态
+        updateNodeStatus(id, 'running');
+        set({ currentExecutingNodeId: id, executionError: null });
+
+        try {
+            // 收集输入数据（从上游节点的输出获取）
+            const inputs: Record<string, any> = {};
+            for (const edge of edges) {
+                if (edge.target === id) {
+                    const sourceResult = get().executionResults[edge.source];
+                    if (sourceResult) {
+                        inputs[edge.targetHandle] = sourceResult[edge.sourceHandle];
+                    }
+                }
+            }
+
+            // 调用后端 API 执行节点
+            const response = await workflowApi.executeNode({
+                id: node.id,
+                type: node.type,
+                position: node.position,
+                data: node.data
+            }, inputs);
+
+            const result = response.data;
+
+            if (result.status === 'success') {
+                updateNodeStatus(id, 'success', result.output);
+                set({ currentExecutingNodeId: null });
+            } else {
+                updateNodeStatus(id, 'error', null, result.error || '执行失败');
+                set({ currentExecutingNodeId: null, executionError: result.error });
+            }
+        } catch (error: any) {
+            const errorMessage = error.response?.data?.detail || error.message || '执行失败';
+            updateNodeStatus(id, 'error', null, errorMessage);
+            set({ currentExecutingNodeId: null, executionError: errorMessage });
+            toast.error(`节点执行失败: ${errorMessage}`);
+        }
+    },
+
+    executeAll: async () => {
+        const { nodes, edges, updateNodeStatus } = get();
+
+        if (nodes.length === 0) {
+            toast.error('工作流为空，无法执行');
+            return;
         }
 
-        set({ isExecuting: false });
+        set({ isExecuting: true, executionError: null });
+
+        // 重置所有节点状态
+        nodes.forEach(n => updateNodeStatus(n.id, 'idle'));
+
+        try {
+            // 调用后端 API 执行整个工作流
+            const response = await workflowApi.executeWorkflow(
+                nodes.map(n => ({
+                    id: n.id,
+                    type: n.type,
+                    position: n.position,
+                    data: n.data
+                })),
+                edges.map(e => ({
+                    id: e.id,
+                    source: e.source,
+                    source_handle: e.sourceHandle || '',
+                    target: e.target,
+                    target_handle: e.targetHandle || ''
+                }))
+            );
+
+            const results = response.data;
+
+            // 更新每个节点的执行结果
+            for (const result of results) {
+                if (result.status === 'success') {
+                    updateNodeStatus(result.node_id, 'success', result.output);
+                } else {
+                    updateNodeStatus(result.node_id, 'error', null, result.error);
+                }
+            }
+
+            // 统计执行结果
+            const successCount = results.filter((r: { status: string }) => r.status === 'success').length;
+            const errorCount = results.filter((r: { status: string }) => r.status === 'error').length;
+
+            if (errorCount === 0) {
+                toast.success(`工作流执行完成，${successCount} 个节点成功`);
+            } else {
+                toast.error(`工作流执行完成，${successCount} 成功，${errorCount} 失败`);
+            }
+        } catch (error: any) {
+            const errorMessage = error.response?.data?.detail || error.message || '执行失败';
+            set({ executionError: errorMessage });
+            toast.error(`工作流执行失败: ${errorMessage}`);
+        } finally {
+            set({ isExecuting: false, currentExecutingNodeId: null });
+        }
     },
 
     setSidebarOpen: (open) => set({ sidebarOpen: open }),
@@ -420,10 +524,24 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     },
 
     clearWorkflow: () => {
-        set({ nodes: [], edges: [], selectedNodeId: null, executionResults: {} });
+        set({
+            nodes: [],
+            edges: [],
+            selectedNodeId: null,
+            executionResults: {},
+            executionError: null,
+            currentExecutingNodeId: null,
+            isExecuting: false
+        });
     },
 
     loadWorkflow: (nodes, edges) => {
-        set({ nodes, edges, selectedNodeId: null });
+        set({
+            nodes,
+            edges,
+            selectedNodeId: null,
+            executionResults: {},
+            executionError: null
+        });
     }
 }));

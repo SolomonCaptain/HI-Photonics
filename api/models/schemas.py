@@ -75,6 +75,20 @@ class NodeConnection(BaseModel):
     target_handle: str
 
 
+# ===== 请求模型 =====
+
+class WorkflowExecuteRequest(BaseModel):
+    """工作流执行请求"""
+    nodes: List[NodeInstance]
+    edges: List[NodeConnection]
+
+
+class NodeExecuteRequest(BaseModel):
+    """单节点执行请求"""
+    node: NodeInstance
+    inputs: Dict[str, Any] = {}
+
+
 # ===== 工作流相关 =====
 
 class WorkflowCreate(BaseModel):

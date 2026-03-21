@@ -6,7 +6,8 @@ from fastapi import APIRouter, HTTPException
 from typing import List
 from api.models.schemas import (
     NodeInstance, NodeConnection, NodeDefinition, ExecutionResult,
-    WorkflowCreate, WorkflowResponse, NodeTypeEnum
+    WorkflowCreate, WorkflowResponse, NodeTypeEnum,
+    WorkflowExecuteRequest, NodeExecuteRequest
 )
 from api.services import workflow_service
 
@@ -124,21 +125,15 @@ async def get_node_definitions() -> dict:
 
 
 @router.post("/execute")
-async def execute_workflow(
-    nodes: List[NodeInstance],
-    edges: List[NodeConnection]
-) -> List[ExecutionResult]:
+async def execute_workflow(request: WorkflowExecuteRequest) -> List[ExecutionResult]:
     """执行工作流"""
-    return await workflow_service.execute_workflow(nodes, edges)
+    return await workflow_service.execute_workflow(request.nodes, request.edges)
 
 
 @router.post("/execute-node")
-async def execute_single_node(
-    node: NodeInstance,
-    inputs: dict = {}
-) -> ExecutionResult:
+async def execute_single_node(request: NodeExecuteRequest) -> ExecutionResult:
     """执行单个节点"""
-    return await workflow_service.execute_node(node, inputs, [], [])
+    return await workflow_service.execute_node(request.node, request.inputs, [], [])
 
 
 # 工作流存储（简化版，实际应使用数据库）

@@ -39,12 +39,12 @@ export const workflowApi = {
     getNodeDefinition: () =>
         apiClient.get('/api/workflow/nodes'),
 
-    // 执行工作流
+    // 执行工作流 - 发送节点和边作为 JSON body
     executeWorkflow: (nodes: any[], edges: any[]) =>
         apiClient.post('/api/workflow/execute', { nodes, edges }),
 
-    // 执行单个节点
-    executeNode: (node: any, inputs: any) =>
+    // 执行单个节点 - 发送节点和输入作为 JSON body
+    executeNode: (node: any, inputs: Record<string, any>) =>
         apiClient.post('/api/workflow/execute-node', { node, inputs }),
 
     // 保存工作流
