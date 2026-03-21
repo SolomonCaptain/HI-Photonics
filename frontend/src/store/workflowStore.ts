@@ -281,6 +281,8 @@ interface WorkflowState {
 
     addEdge: (edge: NodeConnection) => void;
     removeEdge: (id: string) => void;
+    setNodes: (nodes: NodeInstance[]) => void;
+    setEdges: (edges: NodeConnection[]) => void;
 
     executeNode: (id: string) => Promise<void>;
     executeAll: () => Promise<void>;
@@ -363,6 +365,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     removeEdge: (id) => {
         set(state => ({ edges: state.edges.filter(e => e.id !== id) }));
     },
+
+    setNodes: (nodes) => set({ nodes }),
+    setEdges: (edges) => set({ edges }),
 
     executeNode: async (id) => {
         set(state => ({

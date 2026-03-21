@@ -10,8 +10,8 @@ import {
     Controls,
     MiniMap,
     addEdge,
-    useNodesState,
-    useEdgesState,
+    applyNodeChanges,
+    applyEdgeChanges,
     BackgroundVariant,
     ReactFlowProvider,
     ConnectionLineType
@@ -19,12 +19,16 @@ import {
 import type {
     Connection,
     NodeTypes,
-    ReactFlowInstance
+    ReactFlowInstance,
+    OnNodesChange,
+    OnEdgesChange,
+    Node,
+    Edge
 } from '@xyflow/react';
 import { Box } from '@mui/material';
 import { WorkflowNode } from './nodes';
 import { useWorkflowStore } from '../store/workflowStore';
-import type { NodeType } from '../types';
+import type { NodeType, NodeInstance, NodeConnection } from '../types';
 import '@xyflow/react/dist/style.css';
 
 const nodeTypes: NodeTypes = {
@@ -51,22 +55,20 @@ const WorkflowCanvas: React.FC = () => {
         edges,
         addNode,
         addEdge: storeAddEdge,
-        updateNodePosition,
+        setNodes,
+        setEdges,
         setSelectedNode
     } = useWorkflowStore();
 
-    const [localNodes, , onNodesChange] = useNodesState(nodes);
-    const [localEdges, setLocalEdges, onEdgesChange] = useEdgesState(edges);
+    // 处理节点变化（拖拽、选择等）
+    const onNodesChange: OnNodesChange = useCallback((changes) => {
+        setNodes(applyNodeChanges(changes, nodes as Node[]) as NodeInstance[]);
+    }, [nodes, setNodes]);
 
-    // 同步节点变化
-    const handleNodesChange = useCallback((changes: any[]) => {
-        onNodesChange(changes);
-        changes.forEach(change => {
-            if (change.type === 'position' && change.position) {
-                updateNodePosition(change.id, change.position);
-            }
-        });
-    }, [onNodesChange, updateNodePosition]);
+    // 处理边变化
+    const onEdgesChange: OnEdgesChange = useCallback((changes) => {
+        setEdges(applyEdgeChanges(changes, edges as Edge[]) as NodeConnection[]);
+    }, [edges, setEdges]);
 
     // 连接处理
     const onConnect = useCallback((connection: Connection) => {
@@ -79,8 +81,8 @@ const WorkflowCanvas: React.FC = () => {
                 targetHandle: connection.targetHandle
             });
         }
-        setLocalEdges(eds => addEdge(connection, eds));
-    }, [storeAddEdge, setLocalEdges]);
+        setEdges(addEdge(connection, edges as Edge[]) as NodeConnection[]);
+    }, [storeAddEdge, setEdges, edges]);
 
     // 拖放处理
     const onDragOver = useCallback((event: React.DragEvent) => {
@@ -107,6 +109,11 @@ const WorkflowCanvas: React.FC = () => {
         setSelectedNode(null);
     }, [setSelectedNode]);
 
+    // 点击节点选中
+    const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
+        setSelectedNode(node.id);
+    }, [setSelectedNode]);
+
     return (
         <Box
             ref={reactFlowWrapper}
@@ -117,15 +124,16 @@ const WorkflowCanvas: React.FC = () => {
             }}
         >
             <ReactFlow
-                nodes={localNodes}
-                edges={localEdges}
-                onNodesChange={handleNodesChange}
+                nodes={nodes as Node[]}
+                edges={edges as Edge[]}
+                onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
                 onInit={setReactFlowInstance}
                 onDrop={onDrop}
                 onDragOver={onDragOver}
                 onPaneClick={onPanelClick}
+                onNodeClick={onNodeClick}
                 nodeTypes={nodeTypes}
                 fitView
                 snapToGrid
