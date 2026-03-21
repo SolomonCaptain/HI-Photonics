@@ -12,30 +12,60 @@
 | core | ✅ 100% | ✅ 完整 | ✅ 有 | ✅ 完整 | 完成 |
 | models/inverse | ✅ 100% | ✅ 完整 | ✅ 有 | ✅ 完整 | 完成 |
 | models/training | ✅ 100% | ✅ 完整 | ✅ 有 | ✅ 完整 | 完成 |
+| models/safetensor_utils | ✅ 100% | ✅ 完整 | ✅ 有 | ✅ 完整 | 完成 |
 | workflows | ✅ 100% | ✅ 完整 | ✅ 有 | ✅ 完整 | 完成 |
 | challenges | ✅ 100% | ✅ 完整 | ✅ 有 | ✅ 完整 | 完成 |
-| data | ✅ 80% | ⚠️ 部分 | ✅ 有 | ✅ 完整 | 基本完成 |
+| data | ✅ 100% | ✅ 完整 | ✅ 有 | ✅ 完整 | 完成 |
 | optimization | ✅ 90% | ✅ 完整 | ⚠️ 无 | ✅ 完整 | 基本完成 |
 | interfaces | ✅ 85% | ⚠️ 部分 | ✅ 有 | ✅ 完整 | 基本完成 |
-| api | ✅ 100% | ⚠️ 无 | ✅ 有 | ✅ 完整 | 完成 |
-| frontend | ✅ 100% | ⚠️ 无 | ✅ 有 | ⚠️ 基础 | 完成 |
+| api | ✅ 100% | ✅ 有 | ✅ 有 | ✅ 完整 | 完成 |
+| frontend | ✅ 100% | ✅ 有 | ✅ 有 | ✅ 完整 | 完成 |
 
 ### 模型完成度
 
-| 模型 | 实现 | 测试 | 示例 | 文档 |
-|------|------|------|------|------|
-| TNN (Tandem Network) | ✅ | ✅ | ✅ | ✅ |
-| MDN (Mixture Density Network) | ✅ | ✅ | ✅ | ✅ |
-| CGAN (Conditional GAN) | ✅ | ✅ | ✅ | ✅ |
-| PINN (Physics-Informed NN) | ✅ | ✅ | ✅ | ✅ |
-| GNN (Graph Neural Network) | ✅ | ✅ | ⚠️ 无示例 | ✅ |
-| HiLab (VAE + Bayesian) | ✅ | ✅ | ✅ | ✅ |
+| 模型 | 实现 | 测试 | 示例 | 文档 | Safetensors |
+|------|------|------|------|------|-------------|
+| TNN (Tandem Network) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| MDN (Mixture Density Network) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| CGAN (Conditional GAN) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| PINN (Physics-Informed NN) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| GNN (Graph Neural Network) | ✅ | ✅ | ⚠️ 无示例 | ✅ | ✅ |
+| HiLab (VAE + Bayesian) | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
 ## ✅ 已完成功能
 
-### 2026-03-21 重大更新
+### 2026-03-21 重大更新 (第二轮)
+
+#### Safetensors 模型格式支持
+- [x] 添加 `safetensors>=0.4.0` 依赖
+- [x] 更新 `BaseModel.save/load` 支持 safetensors 格式
+- [x] 创建 `models/safetensor_utils.py` 工具模块
+- [x] 支持格式转换 (PyTorch ↔ Safetensors)
+- [x] API 支持训练并保存为 safetensors
+
+#### Windows 平台优化
+- [x] 数据加载器自动适配 (`num_workers=0`)
+- [x] 多进程共享策略 (`file_system`)
+- [x] 创建 `examples/10_windows_training_safetensors.py`
+- [x] 混合精度训练支持
+- [x] 内存优化训练策略
+
+#### 资源管理系统
+- [x] 创建目录结构 (`inputs/`, `outputs/`, `op_models/`)
+- [x] 创建 `api/routers/resources.py` 资源管理 API
+- [x] 创建 `api/services/resource_service.py` 资源服务
+- [x] 更新前端面板连接真实 API
+- [x] 创建工作流模板文件
+
+#### 前端工作流执行
+- [x] `executeAll` 调用真实后端 API
+- [x] `executeNode` 单节点执行
+- [x] 状态管理和错误处理
+- [x] 修复数据格式兼容性问题
+
+### 2026-03-21 重大更新 (第一轮)
 
 #### 模块集成
 - [x] 创建 `hi_photonics/` 统一入口模块
@@ -97,14 +127,14 @@
 - [ ] 添加 CI 构建流程
 
 ### 2. 测试覆盖率提升
-- [ ] 添加 `tests/test_workflows/` 工作流测试
 - [ ] 添加 `tests/test_api/` API 测试
 - [ ] 提升整体覆盖率至 80%+
 - [ ] 配置 Codecov
 
-### 3. GNN 示例
-- [ ] 添加 `examples/10_gnn_inverse_design.py`
-- [ ] 添加图结构数据处理示例
+### 3. Safetensors 完善
+- [ ] 添加模型验证测试
+- [ ] 支持加载远程模型
+- [ ] 添加模型版本管理
 
 ---
 

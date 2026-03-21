@@ -187,17 +187,71 @@ class BaseModel(nn.Module):
     def forward(self, *args, **kwargs) -> Tensor:
         """前向传播"""
     
-    def save(self, path: Union[str, Path]):
-        """保存模型"""
+    def save(self, path: Union[str, Path], 
+             format: Literal["torch", "safetensors"] = "torch",
+             metadata: Optional[Dict[str, Any]] = None):
+        """
+        保存模型
+        
+        Args:
+            path: 保存路径
+            format: 保存格式
+                - "torch": PyTorch 格式 (.pt/.pth)
+                - "safetensors": Safetensors 格式 (.safetensors)
+            metadata: 可选的元数据（仅 safetensors 格式）
+        
+        Examples:
+            # 保存为 PyTorch 格式
+            model.save("model.pt")
+            
+            # 保存为 Safetensors 格式（推荐用于 Windows）
+            model.save("model.safetensors", format="safetensors")
+        """
     
-    def load(self, path: Union[str, Path]):
-        """加载模型"""
+    def load(self, path: Union[str, Path], 
+             format: Literal["torch", "safetensors", "auto"] = "auto"):
+        """
+        加载模型
+        
+        Args:
+            path: 模型路径
+            format: 加载格式
+                - "torch": PyTorch 格式
+                - "safetensors": Safetensors 格式
+                - "auto": 根据文件扩展名自动检测
+        """
     
     def count_parameters(self) -> int:
         """返回参数数量"""
     
     def get_device(self) -> torch.device:
         """返回当前设备"""
+```
+
+#### Safetensors 工具
+
+```python
+from hi_photonics import (
+    convert_torch_to_safetensors,
+    convert_safetensors_to_torch,
+    get_safetensors_info,
+    validate_safetensors_file
+)
+
+# 转换格式
+convert_torch_to_safetensors("model.pt", "model.safetensors")
+convert_safetensors_to_torch("model.safetensors", "model.pt")
+
+# 获取模型信息
+info = get_safetensors_info("model.safetensors")
+# {
+#   "format": "pt",
+#   "metadata": {...},
+#   "tensors": {"weight_name": {"dtype": "F32", "shape": [128, 256]}}
+# }
+
+# 验证文件
+is_valid = validate_safetensors_file("model.safetensors")
 ```
 
 #### ModelConfig
@@ -816,7 +870,7 @@ http://localhost:8000
 #### 获取节点定义
 
 ```
-GET /workflow/nodes
+GET /api/workflow/nodes
 ```
 
 响应:
@@ -831,7 +885,7 @@ GET /workflow/nodes
 #### 执行工作流
 
 ```
-POST /workflow/execute
+POST /api/workflow/execute
 ```
 
 请求体:
@@ -842,10 +896,36 @@ POST /workflow/execute
 }
 ```
 
+响应:
+```json
+[
+  {
+    "node_id": "node_1",
+    "status": "success",
+    "output": {...},
+    "duration": 0.5
+  }
+]
+```
+
+#### 执行单个节点
+
+```
+POST /api/workflow/execute-node
+```
+
+请求体:
+```json
+{
+  "node": {...},
+  "inputs": {...}
+}
+```
+
 #### 创建管道
 
 ```
-POST /workflow/pipeline/create?challenge_name=grating_coupler&model_type=hilab
+POST /api/workflow/pipeline/create?challenge_name=grating_coupler&model_type=hilab
 ```
 
 响应:
@@ -859,7 +939,7 @@ POST /workflow/pipeline/create?challenge_name=grating_coupler&model_type=hilab
 #### 运行管道
 
 ```
-POST /workflow/pipeline/{pipeline_id}/run
+POST /api/workflow/pipeline/{pipeline_id}/run
 ```
 
 请求体:
@@ -869,66 +949,239 @@ POST /workflow/pipeline/{pipeline_id}/run
 }
 ```
 
-#### 训练模型
+---
+
+### 模型训练 API
+
+#### 完整训练（支持 Safetensors）
 
 ```
-POST /workflow/train?challenge_name=grating_coupler&model_type=hilab
-```
-
-请求体:
-```json
-{
-  "epochs": 100,
-  "batchSize": 32
-}
-```
-
-#### 逆向设计
-
-```
-POST /workflow/inverse-design
+POST /api/models/train-full
 ```
 
 请求体:
 ```json
 {
+  "model_type": "tnn",
   "challenge_name": "grating_coupler",
-  "target_performance": [0.9, 0.8, 0.1],
-  "model_type": "hilab"
+  "num_samples": 3000,
+  "design_shape": [100, 22],
+  "performance_dim": 3,
+  "epochs": 50,
+  "batch_size": 32,
+  "learning_rate": 0.001,
+  "save_format": "safetensors",
+  "model_name": "my_model"
 }
-```
-
-#### 仿真设计
-
-```
-POST /workflow/simulate
-```
-
-请求体:
-```json
-{
-  "design": [[...]],
-  "simulator_type": "optics",
-  "config": {
-    "resolution": 50
-  }
-}
-```
-
-#### 获取任务状态
-
-```
-GET /workflow/task/{task_id}/status
 ```
 
 响应:
 ```json
 {
-  "task_id": "task_123",
+  "training_id": "uuid",
+  "model_type": "tnn",
+  "status": "started"
+}
+```
+
+#### 获取训练状态
+
+```
+GET /api/models/train/{training_id}
+```
+
+响应:
+```json
+{
+  "training_id": "uuid",
+  "model_type": "tnn",
   "status": "completed",
-  "result": {...},
-  "progress": 1.0,
-  "duration": 12.5
+  "model_path": "op_models/pretrained/tnn_20260321.safetensors",
+  "metrics": {
+    "final_val_loss": 0.015,
+    "epochs": 100,
+    "parameters": 125000
+  }
+}
+```
+
+#### 使用已加载模型执行逆向设计
+
+```
+POST /api/models/inverse-design-loaded
+```
+
+请求体:
+```json
+{
+  "model_path": "tnn_20260321",
+  "target_performance": [0.9, 0.8, 0.1],
+  "num_samples": 1,
+  "model_type": "tnn"
+}
+```
+
+响应:
+```json
+{
+  "design": [[...]],
+  "predicted_performance": [0.89, 0.79, 0.11],
+  "target_performance": [0.9, 0.8, 0.1],
+  "model_path": "op_models/pretrained/tnn_20260321_forward.safetensors"
+}
+```
+
+#### 列出预训练模型
+
+```
+GET /api/models/pretrained/list
+```
+
+响应:
+```json
+[
+  {
+    "id": "tnn_20260321",
+    "path": "op_models/pretrained/tnn_20260321",
+    "format": "safetensors",
+    "model_type": "tnn",
+    "name": "tnn_windows_trained",
+    "saved_at": "2026-03-21T12:00:00",
+    "platform": "Windows",
+    "design_shape": [100, 22],
+    "performance_dim": 3
+  }
+]
+```
+
+---
+
+### 资源管理 API
+
+#### 列出资产
+
+```
+GET /api/resources/assets?category=inputs&assetType=spectrum
+```
+
+响应:
+```json
+[
+  {
+    "id": "asset_1",
+    "name": "光栅耦合器光谱",
+    "type": "spectrum",
+    "category": "inputs",
+    "size": 128000,
+    "created_at": "2026-03-21T10:00:00",
+    "updated_at": "2026-03-21T10:00:00"
+  }
+]
+```
+
+#### 上传资产
+
+```
+POST /api/resources/assets
+Content-Type: multipart/form-data
+```
+
+#### 列出模型
+
+```
+GET /api/resources/models?modelType=tnn&pretrainedOnly=true
+```
+
+#### 保存工作流
+
+```
+POST /api/resources/workflows
+```
+
+请求体:
+```json
+{
+  "name": "我的逆向设计工作流",
+  "nodes": [...],
+  "edges": [...],
+  "description": "使用 TNN 进行逆向设计",
+  "tags": ["tnn", "inverse-design"]
+}
+```
+
+#### 列出模板
+
+```
+GET /api/resources/templates?category=基础
+```
+
+响应:
+```json
+[
+  {
+    "id": "tpl_basic_inverse",
+    "name": "基础逆向设计",
+    "description": "使用神经网络进行基础逆向设计",
+    "category": "基础",
+    "difficulty": "beginner"
+  }
+]
+```
+
+#### 获取模板详情
+
+```
+GET /api/resources/templates/{template_id}
+```
+
+---
+
+### 系统信息 API
+
+#### 健康检查
+
+```
+GET /health
+```
+
+响应:
+```json
+{
+  "status": "healthy"
+}
+```
+
+#### 系统信息
+
+```
+GET /api/system/info
+```
+
+响应:
+```json
+{
+  "python_version": "3.13.9",
+  "torch_version": "2.0.0",
+  "cuda_available": true,
+  "cuda_version": "12.0",
+  "device_count": 1
+}
+```
+
+#### 目录信息
+
+```
+GET /api/resources/directories/{category}
+```
+
+响应:
+```json
+{
+  "category": "inputs",
+  "path": "F:/repo/HI-Photonics/inputs",
+  "subdirectories": ["datasets", "spectra", "gds", "structures"],
+  "total_size": 1024000,
+  "file_count": 10
 }
 ```
 

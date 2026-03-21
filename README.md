@@ -10,10 +10,12 @@ HI-Photonics 是一个基于深度学习的**光子学逆向设计框架**，旨
 
 **核心特性:**
 - 多种逆向设计模型（TNN, MDN, CGAN, PINN, HiLab）
+- Safetensors 模型格式支持（Windows 友好）
 - 完整的工作流管道和任务调度
 - FDTD/RCWA 仿真器接口
 - 贝叶斯优化和多物理场约束
 - FastAPI 后端 + React 前端
+- Windows 平台优化支持
 
 **技术栈:**
 - Python 3.9+
@@ -202,6 +204,30 @@ BaseModel (nn.Module)
 | PINN | 物理约束设计 | 融入 Maxwell 方程 |
 | GNN | 结构化设计 | 处理图结构数据 |
 | HiLab | 混合逆向设计 | VAE + 贝叶斯优化 |
+
+**模型保存格式:**
+
+框架支持两种模型保存格式：
+
+```python
+# PyTorch 格式 (默认)
+model.save("model.pt")
+
+# Safetensors 格式 (推荐用于 Windows)
+model.save("model.safetensors", format="safetensors")
+
+# 格式转换
+from hi_photonics import convert_torch_to_safetensors
+convert_torch_to_safetensors("model.pt", "model.safetensors")
+```
+
+**Windows 平台优化:**
+
+框架针对 Windows 平台进行了优化：
+- 自动调整 DataLoader 的 `num_workers=0`
+- 使用 `file_system` 多进程共享策略
+- 支持 Safetensors 格式避免 pickle 兼容性问题
+- 混合精度训练 (AMP) 减少内存占用
 
 ### 4. 工作流管道 (workflows/)
 
@@ -444,12 +470,14 @@ pytest tests/ --cov=hi_photonics --cov-report=html
 | `examples/07_cgan_inverse_design.py` | CGAN 逆向设计 |
 | `examples/08_pinn_inverse_design.py` | PINN 逆向设计 |
 | `examples/09_hilab_workflow.py` | HiLab 完整流程 |
+| `examples/10_windows_training_safetensors.py` | Windows 训练 + Safetensors |
 
 ## 关键依赖
 
 | 包 | 版本 | 用途 |
 |---|------|------|
 | torch | >=2.0 | 深度学习框架 |
+| safetensors | >=0.4.0 | 模型序列化（跨平台） |
 | numpy | >=1.20 | 数值计算 |
 | scipy | >=1.7 | 科学计算 |
 | matplotlib | >=3.5 | 可视化 |
@@ -468,8 +496,11 @@ GitHub Actions 配置位于 `.github/workflows/run-tests.yml`：
 
 ### v0.1.0 (当前)
 - 完整的模型实现 (TNN, MDN, CGAN, PINN, HiLab)
+- Safetensors 模型格式支持
+- Windows 平台优化训练
 - 工作流管道和任务调度
 - FastAPI 后端 + React 前端
+- 资源管理系统 (inputs/outputs/op_models)
 - 命令行工具
 - C++ FDTD 仿真器 (Windows 兼容)
 
