@@ -11,6 +11,7 @@ import {
     Psychology,
     AccountTree,
     Dashboard,
+    SmartToy,
 } from '@mui/icons-material';
 import { SidebarPanelType } from '../../types';
 import type { SidebarPanelType as SidebarPanelTypeType } from '../../types';
@@ -53,6 +54,12 @@ const navItems: NavItem[] = [
         name: '模板',
         icon: <Dashboard />,
         description: '预设工作流模板'
+    },
+    {
+        type: SidebarPanelType.AI_ASSISTANT,
+        name: 'AI 助手',
+        icon: <SmartToy />,
+        description: 'LLM 智能设计助手'
     }
 ];
 

@@ -14,7 +14,8 @@ import {
     NodesPanel,
     ModelsPanel,
     WorkflowsPanel,
-    TemplatesPanel
+    TemplatesPanel,
+    ChatPanel
 } from '../sidebar';
 
 // 面板标题映射
@@ -23,7 +24,8 @@ const panelTitles: Record<string, string> = {
     [SidebarPanelType.NODES]: '节点库',
     [SidebarPanelType.MODELS]: '模型',
     [SidebarPanelType.WORKFLOWS]: '工作流',
-    [SidebarPanelType.TEMPLATES]: '模板'
+    [SidebarPanelType.TEMPLATES]: '模板',
+    [SidebarPanelType.AI_ASSISTANT]: 'AI 助手'
 };
 
 // 面板颜色映射
@@ -32,7 +34,8 @@ const panelColors: Record<string, string> = {
     [SidebarPanelType.NODES]: '#3b82f6',
     [SidebarPanelType.MODELS]: '#8b5cf6',
     [SidebarPanelType.WORKFLOWS]: '#22c55e',
-    [SidebarPanelType.TEMPLATES]: '#06b6d4'
+    [SidebarPanelType.TEMPLATES]: '#06b6d4',
+    [SidebarPanelType.AI_ASSISTANT]: '#ec4899'
 };
 
 const MainSidebar: React.FC = () => {
@@ -51,6 +54,8 @@ const MainSidebar: React.FC = () => {
                 return <WorkflowsPanel />;
             case SidebarPanelType.TEMPLATES:
                 return <TemplatesPanel />;
+            case SidebarPanelType.AI_ASSISTANT:
+                return <ChatPanel />;
             default:
                 return <NodesPanel />;
         }

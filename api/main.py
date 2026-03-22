@@ -18,7 +18,7 @@ sys.path.insert(0, str(project_root))
 api_dir = Path(__file__).parent
 sys.path.insert(0, str(api_dir))
 
-from api.routers import workflow_router, models_router, resources_router
+from api.routers import workflow_router, models_router, resources_router, llm_router
 
 
 @asynccontextmanager
@@ -64,6 +64,7 @@ app.add_middleware(
 app.include_router(workflow_router, prefix="/api")
 app.include_router(models_router, prefix="/api")
 app.include_router(resources_router, prefix="/api")
+app.include_router(llm_router, prefix="/api")
 
 
 @app.get("/")

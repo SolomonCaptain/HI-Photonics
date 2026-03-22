@@ -8,3 +8,4 @@ export { default as NodesPanel } from './NodesPanel';
 export { default as ModelsPanel } from './ModelsPanel';
 export { default as WorkflowsPanel } from './WorkflowsPanel';
 export { default as TemplatesPanel } from './TemplatesPanel';
+export { default as ChatPanel } from './ChatPanel';

@@ -118,6 +118,7 @@ export const SidebarPanelType = {
     MODELS: 'models',
     WORKFLOWS: 'workflows',
     TEMPLATES: 'templates',
+    AI_ASSISTANT: 'ai_assistant',
 } as const;
 
 export type SidebarPanelType = typeof SidebarPanelType[keyof typeof SidebarPanelType];
