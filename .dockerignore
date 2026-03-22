@@ -1,0 +1,76 @@
+# Git
+.git
+.gitignore
+.bitfun
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+.eggs
+*.egg
+.venv
+venv/
+ENV/
+env/
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Node
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Build outputs
+dist/
+build/
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile*
+docker-compose*
+.docker
+
+# Local configs
+.env
+.env.local
+.env.*.local
+
+# Test and docs
+tests/
+docs/
+*.md
+!README.md
+
+# Large data files
+*.h5
+*.hdf5
+*.pth
+*.pt
+*.safetensors
+*.ckpt
+
+# Input/output directories (will be mounted as volumes)
+inputs/datasets/
+outputs/simulations/
+outputs/designs/
+
+# Temporary files
+*.log
+*.tmp
+*.temp
+.cache

@@ -1,0 +1,89 @@
+# HI-Photonics Backend Dockerfile
+# 基于 Python 3.11 的光子学逆向设计后端服务
+
+# ============================================
+# Stage 1: Builder
+# ============================================
+FROM python:3.11-slim AS builder
+
+# 设置环境变量
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# 安装编译依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# 创建虚拟环境
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# 升级 pip
+RUN pip install --upgrade pip setuptools wheel
+
+# 复制依赖文件
+COPY setup.py .
+COPY api/pyproject.toml ./api/
+
+# 安装 PyTorch (CPU 版本，更小)
+RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# 安装项目依赖
+RUN pip install -e . && \
+    pip install -e ./api
+
+# ============================================
+# Stage 2: Runtime
+# ============================================
+FROM python:3.11-slim AS runtime
+
+# 设置环境变量
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    PATH="/opt/venv/bin:$PATH"
+
+# 安装运行时依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制虚拟环境
+COPY --from=builder /opt/venv /opt/venv
+
+# 创建工作目录
+WORKDIR /app
+
+# 复制应用代码
+COPY --chown=app:app api/ ./api/
+COPY --chown=app:app core/ ./core/
+COPY --chown=app:app models/ ./models/
+COPY --chown=app:app challenges/ ./challenges/
+COPY --chown=app:app data/ ./data/
+COPY --chown=app:app interfaces/ ./interfaces/
+COPY --chown=app:app llm/ ./llm/
+COPY --chown=app:app workflows/ ./workflows/
+COPY --chown=app:app optimization/ ./optimization/
+COPY --chown=app:app hi_photonics/ ./hi_photonics/
+
+# 创建必要的目录
+RUN mkdir -p /app/inputs /app/outputs && \
+    useradd -m -u 1000 app && \
+    chown -R app:app /app
+
+# 切换到非 root 用户
+USER app
+
+# 暴露端口
+EXPOSE 8080
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# 启动命令
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]

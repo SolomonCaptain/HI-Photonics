@@ -4,7 +4,10 @@
 
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8080';
+// 支持环境变量配置 API 地址
+// Docker 部署时通过 Nginx 反向代理，使用相对路径 /api
+// 开发环境使用完整 URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 
 const apiClient = axios.create({
     baseURL: API_BASE_URL,
