@@ -17,12 +17,16 @@ data/loaders/__pycache__/
 data/preprocess/__pycache__/
 examples/__pycache__/
 hi_photonics/__pycache__/
+hi_photonics.egg-info
 interfaces/__pycache__/
 interfaces/foundry/__pycache__/
 interfaces/simulators/__pycache__/
 interfaces/simulators/optics/__pycache__/
+interfaces/simulators/optics/optics.pyd
+interfaces/simulators/optics/Release/
 interfaces/visualization/__pycache__/
 llm/__pycache__/
+tests/test_api/__pycache__/
 tests/test_core/__pycache__/
 tests/test_interfaces/__pycache__/
 tests/test_llm/__pycache__/

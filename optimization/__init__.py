@@ -18,8 +18,8 @@ from .constraints import (
     
     # 热效应约束
     ThermalConstraint,
-    ThermoOpticEffect,
-    HeatConductionSolver,
+    ThermoOpticConstraint,
+    HeatEquationSolver,
 )
 
 # 求解器
@@ -45,8 +45,8 @@ __all__ = [
     
     # 热效应约束
     'ThermalConstraint',
-    'ThermoOpticEffect',
-    'HeatConductionSolver',
+    'ThermoOpticConstraint',
+    'HeatEquationSolver',
     
     # 贝叶斯优化器
     'BayesianOptimizer',

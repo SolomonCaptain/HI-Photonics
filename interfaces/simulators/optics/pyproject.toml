@@ -25,6 +25,9 @@ dev = [
 [tool.scikit-build]
 cmake.args = ["-DCMAKE_BUILD_TYPE=Release"]
 wheel.packages = ["src/optics"]
+# 确保在 Windows 上将 .pyd 复制到正确位置
+editable.rebuild = true
+install.components = ["python"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

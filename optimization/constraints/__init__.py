@@ -35,17 +35,16 @@ from .manufacturing_tolerance import (
 )
 
 from .thermal import (
-    ThermalModelType,
-    ThermalProperties,
-    THERMAL_PROPERTIES,
-    ThermoOpticEffect,
-    ThermalExpansion,
-    HeatConductionSolver,
-    HeatSourceModel,
+    ThermalConfig,
+    HeatEquationSolver,
+    TemperatureConstraint,
+    ThermalStressConstraint,
+    ThermoOpticConstraint,
+    HeatDissipationConstraint,
     ThermalConstraint,
-    ThermalOptimizationConstraint,
-    get_thermal_properties,
-    compute_thermal_phase_shift,
+    create_thermal_constraint,
+    compute_temperature_field,
+    estimate_thermal_index_change,
 )
 
 
@@ -74,15 +73,14 @@ __all__ = [
     'list_available_processes',
     
     # 热效应相关
-    'ThermalModelType',
-    'ThermalProperties',
-    'THERMAL_PROPERTIES',
-    'ThermoOpticEffect',
-    'ThermalExpansion',
-    'HeatConductionSolver',
-    'HeatSourceModel',
+    'ThermalConfig',
+    'HeatEquationSolver',
+    'TemperatureConstraint',
+    'ThermalStressConstraint',
+    'ThermoOpticConstraint',
+    'HeatDissipationConstraint',
     'ThermalConstraint',
-    'ThermalOptimizationConstraint',
-    'get_thermal_properties',
-    'compute_thermal_phase_shift',
+    'create_thermal_constraint',
+    'compute_temperature_field',
+    'estimate_thermal_index_change',
 ]

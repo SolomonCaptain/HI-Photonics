@@ -26,15 +26,27 @@ Graph Neural Network (GNN) 图神经网络
 from typing import Dict, Optional, Tuple, List, Union, Any
 from dataclasses import dataclass, field
 from pathlib import Path
+import warnings
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch_sparse import SparseTensor
-from torch_geometric.nn import GCNConv, GATConv, SAGEConv, global_mean_pool, global_max_pool, global_add_pool
 
 from models.base import BaseModel, ModelConfig, SurrogateModel, InverseModel
+
+# PyTorch Geometric 依赖（可选）
+try:
+    from torch_sparse import SparseTensor
+    from torch_geometric.nn import GCNConv, GATConv, SAGEConv, global_mean_pool, global_max_pool, global_add_pool
+    PYG_AVAILABLE = True
+except ImportError:
+    PYG_AVAILABLE = False
+    warnings.warn(
+        "PyTorch Geometric 未安装。请运行 `pip install torch-geometric torch-sparse` 安装。"
+        "GNN 功能将不可用，但代码结构仍然可用。",
+        UserWarning
+    )
 
 
 # ============================================================================

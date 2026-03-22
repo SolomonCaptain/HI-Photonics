@@ -4,8 +4,13 @@ HI-Photonics 安装配置
 光子学逆向设计框架，支持多种深度学习模型和仿真器。
 """
 
-from setuptools import setup, find_packages
+import subprocess
+import sys
+import os
 from pathlib import Path
+from setuptools import setup, find_packages
+from setuptools.command.build_py import build_py
+from setuptools.command.develop import develop
 
 # 读取 README
 readme_path = Path(__file__).parent / "README.md"
@@ -20,6 +25,58 @@ try:
     version = __version__
 except ImportError:
     pass
+
+
+def build_optics():
+    """编译 Optics C++ FDTD 仿真器"""
+    optics_dir = Path(__file__).parent / "interfaces" / "simulators" / "optics"
+    
+    if not optics_dir.exists():
+        print("Optics directory not found, skipping...")
+        return
+    
+    # 检查是否已安装编译依赖
+    try:
+        import pybind11
+        import skbuild
+    except ImportError:
+        print("Installing build dependencies...")
+        subprocess.check_call([
+            sys.executable, "-m", "pip", "install", 
+            "pybind11>=2.10", "scikit-build-core>=0.12.2"
+        ])
+    
+    # 编译 optics
+    print("Building Optics FDTD simulator...")
+    try:
+        subprocess.check_call([
+            sys.executable, "-m", "pip", "install", "-e", str(optics_dir)
+        ])
+        print("Optics FDTD simulator built successfully!")
+    except subprocess.CalledProcessError as e:
+        print(f"Warning: Failed to build optics: {e}")
+        print("The optics simulator will not be available, but other features will work.")
+
+
+class BuildPyCommand(build_py):
+    """自定义 build_py 命令，包含 optics 编译"""
+    
+    def run(self):
+        # 编译 optics
+        build_optics()
+        # 继续正常构建
+        build_py.run(self)
+
+
+class DevelopCommand(develop):
+    """自定义 develop 命令，包含 optics 编译"""
+    
+    def run(self):
+        # 编译 optics
+        build_optics()
+        # 继续正常开发模式安装
+        develop.run(self)
+
 
 setup(
     name="hi-photonics",
@@ -74,11 +131,21 @@ setup(
         "meep": [
             "pymeep>=1.20",
         ],
+        "optics": [
+            "pybind11>=2.10",
+            "scikit-build-core>=0.12.2",
+        ],
         "docs": [
             "sphinx>=5.0",
             "sphinx-rtd-theme>=1.0",
             "myst-parser>=0.18",
         ],
+    },
+    
+    # 自定义命令
+    cmdclass={
+        "build_py": BuildPyCommand,
+        "develop": DevelopCommand,
     },
     
     # 入口点
