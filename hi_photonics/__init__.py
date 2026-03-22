@@ -2,8 +2,10 @@
 HI-Photonics: 光子学逆向设计框架
 
 一个基于深度学习的光子学器件逆向设计平台，整合了：
-- 多种逆向设计模型（TNN, MDN, CGAN, PINN, HiLAB）
-- FDTD/RCWA 仿真器接口
+- 多种逆向设计模型（TNN, MDN, CGAN, PINN, GNN, HiLAB）
+- LLM 智能助手（自然语言设计意图解析、工作流配置推荐）
+- 完整的数据模块（生成器、加载器、预处理、增强）
+- FDTD/RCWA 仿真器接口（Optics C++ FDTD 已编译）
 - 贝叶斯优化和多物理场约束
 - 完整的工作流管道
 
@@ -26,7 +28,7 @@ HI-Photonics: 光子学逆向设计框架
     >>> result = pipeline.run()
 """
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 __author__ = "HI-Photonics Team"
 
 # 核心模块

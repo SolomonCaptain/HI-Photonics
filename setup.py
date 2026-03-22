@@ -19,7 +19,7 @@ if readme_path.exists():
     long_description = readme_path.read_text(encoding="utf-8")
 
 # 读取版本
-version = "0.1.0"
+version = "0.3.0"
 try:
     from hi_photonics import __version__
     version = __version__

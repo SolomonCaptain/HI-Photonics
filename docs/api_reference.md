@@ -1,6 +1,6 @@
 # HI-Photonics API 参考
 
-> 版本: 0.2.0 | 最后更新: 2026-03-22
+> 版本: 0.3.0 | 最后更新: 2026-03-22
 
 本文档提供 HI-Photonics 框架的完整 API 参考。
 
@@ -706,6 +706,112 @@ class MySimulator(SimulatorInterface):
     ...
 ```
 
+### 可视化工具
+
+#### 场分布可视化
+
+```python
+from hi_photonics import FieldVisualizer, FieldPlotConfig
+
+# 创建可视化器
+visualizer = FieldVisualizer(FieldPlotConfig(
+    colormap="hot",
+    show_colorbar=True,
+    figsize=(10, 8)
+))
+
+# 绘制场强度
+fig = visualizer.plot_intensity(
+    field_data,           # [H, W] 或 [H, W, C]
+    title="电场强度分布",
+    wavelength=1.55
+)
+
+# 绘制相位
+fig = visualizer.plot_phase(
+    field_data,
+    title="相位分布"
+)
+
+# 绘制坡印廷矢量
+fig = visualizer.plot_poynting_vector(
+    Ex, Ey, Ez,           # 电场分量
+    Hx, Hy, Hz,           # 磁场分量
+    title="能量流分布"
+)
+
+# 绘制横截面
+fig = visualizer.plot_cross_section(
+    field_data,
+    position=50,          # 截面位置
+    axis='x',             # 'x' 或 'y'
+    title="横截面场分布"
+)
+
+# 创建动画
+visualizer.animate_field(
+    field_series,         # [T, H, W] 时间序列
+    interval=50,          # 帧间隔（ms）
+    save_path="field_animation.gif"
+)
+```
+
+#### 结构可视化
+
+```python
+from hi_photonics import StructureVisualizer, StructurePlotConfig
+
+# 创建可视化器
+visualizer = StructureVisualizer(StructurePlotConfig(
+    cmap_design="gray",
+    cmap_structure="Blues",
+    figsize=(10, 8)
+))
+
+# 绘制设计参数分布
+fig = visualizer.plot_design(
+    design,               # [H, W] 设计参数
+    title="设计参数分布",
+    show_colorbar=True
+)
+
+# 绘制二值结构
+fig = visualizer.plot_binary_structure(
+    design,
+    threshold=0.5,
+    title="二值化结构"
+)
+
+# 绘制多层结构
+fig = visualizer.plot_multilayer(
+    layers,               # List of [H, W]
+    layer_names=["Core", "Clad", "Substrate"],
+    title="多层结构"
+)
+
+# 绘制光栅示意图
+fig = visualizer.plot_grating(
+    design,
+    period=0.5,
+    wavelength=1.55,
+    title="光栅耦合器"
+)
+
+# 绘制波导示意图
+fig = visualizer.plot_waveguide(
+    design,
+    width=0.5,
+    title="波导结构"
+)
+
+# 绘制优化历史
+fig = visualizer.plot_optimization_history(
+    history,              # Dict with 'loss', 'efficiency', etc.
+    title="优化历史",
+    log_scale=True
+)
+```
+
 ---
 
 ## 优化模块 (optimization)
@@ -828,20 +934,97 @@ train_loader, val_loader, test_loader = create_dataloaders(
 )
 ```
 
+### 数据生成器
+
+```python
+from hi_photonics import (
+    DataGenerator,
+    RandomSamplingGenerator,
+    ActiveLearningGenerator,
+    MultiFidelityGenerator
+)
+
+# 随机采样生成器
+random_gen = RandomSamplingGenerator(
+    design_shape=(100, 22),
+    performance_dim=3,
+    method="lhs",  # "uniform", "lhs", "sobol", "halton"
+    num_samples=1000,
+    bounds=(0.0, 1.0),
+    seed=42
+)
+samples = random_gen.generate()
+
+# 主动学习生成器
+active_gen = ActiveLearningGenerator(
+    design_shape=(100, 22),
+    performance_dim=3,
+    acquisition_fn="ei",  # "uncertainty", "ei", "ucb", "thompson"
+    initial_samples=50,
+    batch_size=10
+)
+samples = active_gen.acquire(model, existing_data)
+
+# 多保真度生成器
+mf_gen = MultiFidelityGenerator(
+    design_shape=(100, 22),
+    performance_dim=3,
+    fidelities=["low", "medium", "high"],
+    allocation_strategy="adaptive",  # "fixed", "adaptive", "cascaded"
+    cost_ratios={"low": 1, "medium": 5, "high": 25}
+)
+samples = mf_gen.generate(num_samples=100)
+```
+
+### 数据预处理
+
+```python
+from hi_photonics import (
+    Normalizer,
+    ZScoreNormalizer,
+    MinMaxNormalizer,
+    RobustNormalizer,
+    LogNormalizer
+)
+
+# Z-Score 归一化
+normalizer = ZScoreNormalizer()
+normalized = normalizer.fit_transform(data)
+
+# MinMax 归一化
+normalizer = MinMaxNormalizer(feature_range=(0, 1))
+normalized = normalizer.fit_transform(data)
+
+# 鲁棒归一化（对异常值稳健）
+normalizer = RobustNormalizer()
+normalized = normalizer.fit_transform(data)
+
+# Log 归一化
+normalizer = LogNormalizer()
+normalized = normalizer.fit_transform(data)
+```
+
 ### 数据增强
 
 ```python
-from hi_photonics import DataAugmentation
+from hi_photonics import DataAugmenter, AugmentationConfig
 
-augmentation = DataAugmentation(
+# 创建增强器
+augmenter = DataAugmenter(AugmentationConfig(
     horizontal_flip=True,
     vertical_flip=False,
-    rotation=False,
-    noise_injection=0.02
-)
+    rotation_angle=15.0,
+    noise_std=0.02,
+    mixup_alpha=0.2,
+    cutout_prob=0.1,
+    cutout_size=10
+))
 
 # 应用增强
-augmented_design = augmentation(design)
+augmented_design = augmenter.augment(design)
+
+# 批量增强
+augmented_batch = augmenter.augment_batch(designs)
 ```
 
 ### 数据保存

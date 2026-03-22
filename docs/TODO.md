@@ -30,7 +30,7 @@
 | MDN (Mixture Density Network) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | CGAN (Conditional GAN) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | PINN (Physics-Informed NN) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| GNN (Graph Neural Network) | ✅ | ✅ | ⚠️ 无示例 | ✅ | ✅ |
+| GNN (Graph Neural Network) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | HiLab (VAE + Bayesian) | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ---
@@ -247,7 +247,17 @@
 
 ## 📋 版本规划
 
-### v0.2.0 (当前版本 - 已完成) ✅
+### v0.1.0 (已完成) ✅
+
+- [x] 核心模型实现 (TNN, MDN, CGAN, PINN, HiLab)
+- [x] 工作流管道和任务调度
+- [x] 模块集成和统一入口
+- [x] FastAPI 后端 + React 前端
+- [x] 命令行工具
+- [x] C++ FDTD 仿真器 ✅
+- [x] 完整文档 (README, 架构, API 参考)
+
+### v0.2.0 (已完成) ✅
 
 - [x] LLM 智能助手模块
   - [x] LLM 客户端（支持 OpenAI API）
@@ -258,19 +268,9 @@
 - [x] LLM API 端点
 - [x] 流式聊天支持
 
-### v0.1.0 (已完成) ✅
+### v0.3.0 (当前版本 - 已完成) ✅
 
-- [x] 核心模型实现 (TNN, MDN, CGAN, PINN, HiLab)
-- [x] 工作流管道和任务调度
-- [x] 模块集成和统一入口
-- [x] FastAPI 后端 + React 前端
-- [x] 命令行工具
-- [x] C++ FDTD 仿真器 (待编译测试)
-- [x] 完整文档 (README, 架构, API 参考)
-
-### v0.3.0 (下一版本)
-
-- [ ] Optics FDTD 编译和测试
+- [x] Optics FDTD 编译和测试 ✅ 2026-03-22
 - [x] 80%+ 测试覆盖率
 - [x] LLM 模块测试 ✅ 2026-03-22
   - [x] 配置模块测试
@@ -296,13 +296,49 @@
   - [x] 场分布可视化（强度、相位、截面、动画）
   - [x] 结构可视化（设计、光栅、波导、优化历史）
 
-### v0.3.0 (当前版本 - 已完成) ✅
+---
 
-- [x] Optics FDTD 编译和测试 ✅ 2026-03-22
-- [x] 80%+ 测试覆盖率
-- [x] LLM 模块测试
+## 📝 开发约定
 
-### 2026-03-22 (第三轮)
+### 代码风格
+- Python 3.9+ 类型提示
+- PEP 8 规范
+- dataclass 配置类
+- ABC 抽象基类
+
+### 提交规范
+- feat: 新功能
+- fix: 修复问题
+- docs: 文档更新
+- test: 测试相关
+- refactor: 重构
+- chore: 构建/工具
+
+### 分支策略
+- main: 稳定版本
+- develop: 开发分支
+- feature/*: 功能分支
+- hotfix/*: 紧急修复
+
+---
+
+## 🎉 最近完成
+
+### 2026-03-22 (第五轮)
+- **Optics C++ FDTD 编译**: 完成 Windows 平台编译配置
+  - CMakeLists.txt 完善: Windows 特定设置、MSVC 兼容、OpenMP 支持
+  - setup.py 更新: 自动编译 optics 子包的 BuildPyCommand 和 DevelopCommand
+  - 编译测试: 成功生成 optics.pyd，支持 FDTD 类和 __version__ 属性
+  - 修复导入问题: 更新 optimization/constraints/__init__.py 和 optimization/__init__.py
+  - 测试验证: 106 个测试全部通过
+
+### 2026-03-22 (第四轮)
+- **GNN 示例**: 完整实现图神经网络逆向设计示例
+  - 图结构可视化：设计网格到图的转换
+  - 注意力权重可视化：节点重要性热图
+  - 逆向设计示例：基于优化的设计生成
+  - 架构比较：GCN vs GAT vs GraphSAGE 性能对比
+  - PyTorch Geometric 可选依赖优雅处理
 - **测试覆盖率提升**: 添加 LLM 和 workflows 模块测试 (106 个测试全部通过)
   - LLM 配置测试: LLMConfig, EmbeddingConfig, QdrantConfig, RAGConfig
   - LLM 客户端测试: ChatMessage, ChatResponse, LLMClient (同步/异步/流式)

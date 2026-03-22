@@ -9,11 +9,13 @@
 HI-Photonics 是一个基于深度学习的**光子学逆向设计框架**，旨在通过神经网络模型实现高效的光子器件设计与优化。该项目整合了多种先进的深度学习方法，包括 Tandem Network、混合密度网络(MDN)、条件生成对抗网络(CGAN)、物理信息神经网络(PINN) 和 HiLab 混合逆向设计框架。
 
 **核心特性:**
-- 多种逆向设计模型（TNN, MDN, CGAN, PINN, HiLab）
+- 多种逆向设计模型（TNN, MDN, CGAN, PINN, GNN, HiLab）
 - LLM 智能助手（自然语言设计意图解析、工作流配置推荐、结果解释）
+- 完整的数据模块（生成器、加载器、预处理、增强）
+- 可视化组件（场分布、结构、优化历史）
 - Safetensors 模型格式支持（Windows 友好）
 - 完整的工作流管道和任务调度
-- FDTD/RCWA 仿真器接口
+- FDTD/RCWA 仿真器接口（Optics C++ FDTD 已编译）
 - 贝叶斯优化和多物理场约束
 - FastAPI 后端 + React 前端
 - Windows 平台优化支持
@@ -518,6 +520,7 @@ pytest tests/ --cov=hi_photonics --cov-report=html
 | `examples/08_pinn_inverse_design.py` | PINN 逆向设计 |
 | `examples/09_hilab_workflow.py` | HiLab 完整流程 |
 | `examples/10_windows_training_safetensors.py` | Windows 训练 + Safetensors |
+| `examples/11_gnn_inverse_design.py` | GNN 图神经网络逆向设计 |
 
 ## 关键依赖
 
@@ -543,7 +546,20 @@ GitHub Actions 配置位于 `.github/workflows/run-tests.yml`：
 
 ## 版本历史
 
-### v0.2.0 (当前)
+### v0.3.0 (当前)
+- Optics C++ FDTD 仿真器编译完成（Windows 支持）
+- 数据模块完善
+  - 随机采样生成器（uniform/LHS/Sobol/Halton）
+  - 主动学习生成器（EI/UCB/Thompson Sampling）
+  - 多保真度生成器
+  - 归一化和数据增强模块
+- 可视化组件
+  - 场分布可视化（强度、相位、坡印廷矢量）
+  - 结构可视化（设计参数、光栅、波导）
+- GNN 示例（`examples/11_gnn_inverse_design.py`）
+- 测试覆盖率提升（106 个测试通过）
+
+### v0.2.0
 - LLM 智能助手模块
   - 自然语言设计意图解析
   - RAG 知识检索增强
