@@ -31,3 +31,5 @@ optimization/__pycache__/
 optimization/constraints/__pycache__/
 optimization/solvers/__pycache__/
 workflows/__pycache__/
+
+.env

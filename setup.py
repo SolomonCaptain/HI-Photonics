@@ -56,6 +56,13 @@ setup(
             "fastapi>=0.100",
             "uvicorn>=0.23",
             "pydantic>=2.0",
+            "httpx>=0.24",
+        ],
+        "llm": [
+            "httpx>=0.24",
+            "python-dotenv>=1.0",
+            "qdrant-client>=1.7",
+            "numpy>=1.20",
         ],
         "dev": [
             "pytest>=7.0",

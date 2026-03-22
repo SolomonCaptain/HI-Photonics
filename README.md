@@ -514,7 +514,7 @@ GitHub Actions 配置位于 `.github/workflows/run-tests.yml`：
 
 ## 许可证
 
-MIT License - 详见 [LICENSE](LICENSE) 文件
+GPL-3.0 License - 详见 [LICENSE](LICENSE) 文件
 
 ## 联系方式
 
