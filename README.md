@@ -10,6 +10,7 @@ HI-Photonics 是一个基于深度学习的**光子学逆向设计框架**，旨
 
 **核心特性:**
 - 多种逆向设计模型（TNN, MDN, CGAN, PINN, HiLab）
+- LLM 智能助手（自然语言设计意图解析、工作流配置推荐、结果解释）
 - Safetensors 模型格式支持（Windows 友好）
 - 完整的工作流管道和任务调度
 - FDTD/RCWA 仿真器接口
@@ -23,6 +24,7 @@ HI-Photonics 是一个基于深度学习的**光子学逆向设计框架**，旨
 - NumPy, SciPy, Matplotlib
 - Meep / Optics FDTD (可选，用于仿真)
 - FastAPI + React (Web 界面)
+- OpenAI API / Qdrant (LLM 助手，可选)
 
 ## 快速开始
 
@@ -115,6 +117,13 @@ HI-Photonics/
 │   ├── constraints/    # 约束处理
 │   └── solvers/        # 求解器
 │       └── bayesian.py # 贝叶斯优化
+├── llm/                # LLM 智能助手
+│   ├── config.py       # 配置管理
+│   ├── llm_client.py   # LLM 客户端
+│   ├── embedding_client.py # 嵌入客户端
+│   ├── qdrant_service.py   # 向量数据库服务
+│   ├── rag_service.py  # RAG 检索增强
+│   └── orchestrator.py # 提示词编排器
 ├── data/               # 数据管理
 │   ├── generators/     # 数据生成器
 │   ├── loaders/        # 数据加载器
@@ -301,6 +310,40 @@ target = torch.tensor([[0.95, 0.8, 0.1]])
 design = engine.inverse_design(target, n_iterations=30)
 ```
 
+### 7. LLM 智能助手
+
+LLM 助手提供自然语言交互能力，支持设计意图解析、工作流配置推荐和结果解释：
+
+```python
+from llm import LLMAssistant, get_config
+
+# 创建助手
+config = get_config()  # 从环境变量加载配置
+assistant = LLMAssistant(config)
+
+# 解析用户设计意图
+intent = await assistant.parse_intent("设计一个1550nm的光栅耦合器，效率目标80%")
+print(f"器件类型: {intent.device_type}")
+print(f"目标规格: {intent.target_specs}")
+
+# 生成工作流配置建议
+workflow = await assistant.generate_workflow(intent)
+print(f"推荐模型: {workflow.model_config}")
+print(f"选择理由: {workflow.rationale}")
+
+# 解释设计结果
+report = await assistant.explain_results(design_result, simulation_result)
+print(f"结果分析: {report.summary}")
+print(f"改进建议: {report.suggestions}")
+```
+
+**功能特点:**
+- 自然语言转结构化设计意图
+- RAG 知识检索增强
+- 工作流配置智能推荐
+- 设计结果智能解释
+- 多轮对话支持
+
 ## 命令行工具
 
 安装后可使用 `hi-photonics` 命令：
@@ -347,6 +390,10 @@ cd api && uvicorn main:app --reload
 | `/workflow/train` | POST | 训练模型 |
 | `/workflow/inverse-design` | POST | 逆向设计 |
 | `/workflow/simulate` | POST | 仿真设计 |
+| `/llm/chat` | POST | LLM 对话 |
+| `/llm/parse-intent` | POST | 解析设计意图 |
+| `/llm/generate-workflow` | POST | 生成工作流配置 |
+| `/llm/explain-results` | POST | 解释设计结果 |
 
 ### 示例请求
 
@@ -484,6 +531,8 @@ pytest tests/ --cov=hi_photonics --cov-report=html
 | h5py | >=3.0 | 数据存储 |
 | fastapi | >=0.100 | API 服务 |
 | pydantic | >=2.0 | 数据验证 |
+| openai | >=1.0 | LLM API (可选) |
+| qdrant-client | >=1.0 | 向量数据库 (可选) |
 
 ## CI/CD
 
@@ -494,7 +543,16 @@ GitHub Actions 配置位于 `.github/workflows/run-tests.yml`：
 
 ## 版本历史
 
-### v0.1.0 (当前)
+### v0.2.0 (当前)
+- LLM 智能助手模块
+  - 自然语言设计意图解析
+  - RAG 知识检索增强
+  - 工作流配置智能推荐
+  - 设计结果智能解释
+- LLM API 端点
+- 流式聊天支持
+
+### v0.1.0
 - 完整的模型实现 (TNN, MDN, CGAN, PINN, HiLab)
 - Safetensors 模型格式支持
 - Windows 平台优化训练

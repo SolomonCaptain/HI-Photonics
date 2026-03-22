@@ -1,6 +1,6 @@
 # HI-Photonics 架构文档
 
-> 版本: 0.1.0 | 最后更新: 2026-03-21
+> 版本: 0.2.0 | 最后更新: 2026-03-22
 
 ## 概述
 
@@ -45,6 +45,13 @@ HI-Photonics 是一个模块化的光子学逆向设计框架，采用分层架�
 │  │  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │  │ │
 │  │  │  │ DesignPipeline  │  │ TaskDispatcher  │  │  Templates      │  │  │ │
 │  │  │  │ 设计管道        │  │ 任务调度        │  │ 工作流模板      │  │  │ │
+│  │  │  └─────────────────┘  └─────────────────┘  └─────────────────┘  │  │ │
+│  │  └─────────────────────────────────────────────────────────────────┘  │ │
+│  │  ┌─────────────────────────────────────────────────────────────────┐  │ │
+│  │  │                        LLM Module                                │  │ │
+│  │  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │  │ │
+│  │  │  │ PromptOrchestr. │  │   RAGService    │  │   LLMClient     │  │  │ │
+│  │  │  │ 提示词编排      │  │ 检索增强生成    │  │  LLM客户端      │  │  │ │
 │  │  │  └─────────────────┘  └─────────────────┘  └─────────────────┘  │  │ │
 │  │  └─────────────────────────────────────────────────────────────────┘  │ │
 │  └───────────────────────────────────────────────────────────────────────┘ │
@@ -127,7 +134,95 @@ HI-Photonics 是一个模块化的光子学逆向设计框架，采用分层架�
 
 ## 核心模块详解
 
-### 1. Core 模块 - 计算图框架
+### 1. LLM 模块 - 智能助手
+
+LLM 模块提供自然语言交互能力，是 v0.2.0 新增的核心功能。
+
+#### 1.1 架构概览
+
+```
+LLMAssistant (统一入口)
+├── PromptOrchestrator (提示词编排器)
+│   ├── Intent Parser (意图解析)
+│   ├── Workflow Generator (工作流生成)
+│   └── Result Explainer (结果解释)
+├── RAGService (检索增强生成)
+│   ├── QdrantService (向量数据库)
+│   └── EmbeddingClient (嵌入模型)
+└── LLMClient (LLM 客户端)
+    └── OpenAI API / Azure OpenAI
+```
+
+#### 1.2 核心组件
+
+```python
+from llm import LLMAssistant, RAGService, LLMClient
+
+# LLM 客户端
+class LLMClient:
+    """LLM API 客户端"""
+    
+    async def chat(self, messages: List[Dict]) -> str:
+        """同步对话"""
+    
+    async def chat_stream(self, messages: List[Dict]) -> AsyncIterator[str]:
+        """流式对话"""
+
+# RAG 服务
+class RAGService:
+    """检索增强生成服务"""
+    
+    async def retrieve(self, query: str, top_k: int) -> RetrievedContext:
+        """检索相关上下文"""
+    
+    async def index_documents(self, documents: List[Dict]):
+        """索引文档"""
+
+# 编排器
+class PromptOrchestrator:
+    """提示词编排器"""
+    
+    async def parse_intent(self, user_input: str) -> DesignIntent:
+        """解析设计意图"""
+    
+    async def generate_workflow_config(self, intent: DesignIntent) -> WorkflowSuggestion:
+        """生成工作流配置"""
+    
+    async def explain_results(self, design_result: Dict, simulation_result: Dict) -> DesignReport:
+        """解释设计结果"""
+```
+
+#### 1.3 数据流
+
+```
+用户输入 ──► parse_intent() ──► DesignIntent
+                                    │
+                                    ▼
+                            generate_workflow() ──► WorkflowSuggestion
+                                    │
+                                    ▼
+                            执行工作流 ──► 设计结果
+                                    │
+                                    ▼
+                            explain_results() ──► DesignReport
+```
+
+#### 1.4 RAG 知识检索流程
+
+```
+用户查询 ──► EmbeddingClient.embed() ──► 查询向量
+                                              │
+                                              ▼
+                                      QdrantService.search()
+                                              │
+                                              ▼
+                                      相关文档片段
+                                              │
+                                              ▼
+                                      构建增强提示词 ──► LLM 生成
+```
+
+### 2. Core 模块 - 计算图框架
 
 计算图框架是整个系统的核心，负责管理设计流程的执行。
 
@@ -515,17 +610,20 @@ Frontend (Vite) ──► Backend (Uvicorn) ──► Local Storage
 
 ## 未来规划
 
-### 短期 (v0.2.0)
+### 短期 (v0.3.0)
+- Optics FDTD 编译测试
 - 完善代理模型
 - 增强可视化功能
-- 优化工作流性能
+- LLM 模块测试覆盖
 
-### 中期 (v0.3.0)
+### 中期 (v0.4.0)
 - 多目标优化支持
 - 分布式仿真
 - 模型解释性工具
+- LLM 知识库扩展
 
 ### 长期 (v1.0.0)
 - 云平台部署
 - 协作设计功能
 - 自动超参数优化
+- 多语言 LLM 支持

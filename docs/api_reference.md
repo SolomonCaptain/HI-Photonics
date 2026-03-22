@@ -1,6 +1,6 @@
 # HI-Photonics API 参考
 
-> 版本: 0.1.0 | 最后更新: 2026-03-21
+> 版本: 0.2.0 | 最后更新: 2026-03-22
 
 本文档提供 HI-Photonics 框架的完整 API 参考。
 
@@ -14,6 +14,7 @@
 - [接口模块 (interfaces)](#接口模块-interfaces)
 - [优化模块 (optimization)](#优化模块-optimization)
 - [数据模块 (data)](#数据模块-data)
+- [LLM 模块 (llm)](#llm-模块-llm)
 - [REST API](#rest-api)
 
 ---
@@ -857,6 +858,272 @@ save_dataset_to_hdf5(
 
 ---
 
+## LLM 模块 (llm)
+
+LLM 模块提供基于大语言模型的智能逆向设计辅助功能。
+
+### 配置管理
+
+```python
+from llm import (
+    LLMConfig,
+    EmbeddingConfig,
+    QdrantConfig,
+    RAGConfig,
+    LLMAssistantConfig,
+    get_config,
+    reload_config
+)
+
+# 加载配置（从环境变量）
+config = get_config()
+
+# 自定义配置
+llm_config = LLMConfig(
+    provider="openai",  # "openai" | "azure"
+    model="gpt-4",
+    api_key="sk-...",
+    temperature=0.7
+)
+
+embedding_config = EmbeddingConfig(
+    provider="openai",
+    model="text-embedding-3-small"
+)
+
+qdrant_config = QdrantConfig(
+    host="localhost",
+    port=6333,
+    collection_name="photonics_knowledge"
+)
+
+assistant_config = LLMAssistantConfig(
+    llm=llm_config,
+    embedding=embedding_config,
+    qdrant=qdrant_config
+)
+```
+
+### LLMAssistant
+
+统一入口类，提供完整的 LLM 增强逆向设计功能。
+
+```python
+from llm import LLMAssistant, LLMAssistantConfig
+
+# 创建助手
+assistant = LLMAssistant(config)
+
+# 异步上下文管理器
+async with LLMAssistant() as assistant:
+    # 解析意图
+    intent = await assistant.parse_intent("设计1550nm光栅耦合器")
+
+    # 生成工作流
+    workflow = await assistant.generate_workflow(intent)
+
+    # 解释结果
+    report = await assistant.explain_results(design, simulation)
+
+    # 对话
+    response = await assistant.chat("如何提高耦合效率？")
+```
+
+### LLMClient
+
+LLM API 客户端，支持同步和流式调用。
+
+```python
+from llm import LLMClient, LLMConfig
+
+client = LLMClient(LLMConfig(
+    provider="openai",
+    model="gpt-4"
+))
+
+# 同步对话
+response = await client.chat([
+    {"role": "user", "content": "什么是光栅耦合器？"}
+])
+
+# 流式对话
+async for chunk in client.chat_stream(messages):
+    print(chunk, end="", flush=True)
+
+# 带系统提示的对话
+response = await client.chat_with_system(
+    user_message="设计1550nm耦合器",
+    system_prompt="你是光子学设计专家..."
+)
+
+# 关闭客户端
+await client.close()
+```
+
+### RAGService
+
+检索增强生成服务，支持知识库检索。
+
+```python
+from llm import RAGService, RAGConfig
+
+rag = RAGService(RAGConfig())
+
+# 初始化（创建集合）
+rag.initialize()
+
+# 索引文档
+documents = [
+    {"content": "光栅耦合器是...", "metadata": {"source": "docs"}},
+    {"content": "FDTD仿真方法是...", "metadata": {"source": "tutorial"}}
+]
+await rag.index_documents(documents)
+
+# 索引目录
+await rag.index_directory(Path("llm/knowledge"))
+
+# 检索
+context = await rag.retrieve("如何设计光栅耦合器", top_k=5)
+print(context.formatted_context)
+
+# 删除集合
+await rag.delete_collection()
+
+# 关闭连接
+await rag.close()
+```
+
+### QdrantService
+
+Qdrant 向量数据库服务。
+
+```python
+from llm import QdrantService, QdrantConfig
+
+qdrant = QdrantService(QdrantConfig(
+    host="localhost",
+    port=6333,
+    collection_name="my_collection"
+))
+
+# 创建集合
+qdrant.create_collection(vector_size=1536)
+
+# 插入向量
+qdrant.upsert_vectors(
+    ids=["doc1", "doc2"],
+    vectors=[embedding1, embedding2],
+    payloads=[{"text": "..."}, {"text": "..."}]
+)
+
+# 搜索
+results = qdrant.search(query_vector, limit=5)
+
+# 删除集合
+qdrant.delete_collection()
+```
+
+### EmbeddingClient
+
+文本嵌入客户端。
+
+```python
+from llm import EmbeddingClient, EmbeddingConfig
+
+embedding = EmbeddingClient(EmbeddingConfig(
+    provider="openai",
+    model="text-embedding-3-small"
+))
+
+# 获取嵌入向量
+vectors = await embedding.embed(["文本1", "文本2"])
+
+# 获取嵌入维度
+dim = embedding.get_embedding_dimension()  # 1536
+```
+
+### PromptOrchestrator
+
+提示词编排器，管理提示词模板和 LLM 调用。
+
+```python
+from llm import PromptOrchestrator, LLMAssistantConfig
+
+orchestrator = PromptOrchestrator(LLMAssistantConfig())
+
+# 解析设计意图
+intent = await orchestrator.parse_intent(
+    user_input="设计一个1550nm的光栅耦合器，效率目标80%",
+    use_rag=True
+)
+# DesignIntent(
+#   device_type="grating_coupler",
+#   target_specs={"wavelength": 1550, "efficiency": 0.8},
+#   confidence=0.9
+# )
+
+# 生成工作流配置
+workflow = await orchestrator.generate_workflow_config(intent)
+# WorkflowSuggestion(
+#   pipeline_name="grating_coupler_hilab",
+#   challenge="grating_coupler",
+#   model_config={"type": "hilab", "latent_dim": 32},
+#   rationale="HiLab适合追求最优设计..."
+# )
+
+# 解释结果
+report = await orchestrator.explain_results(
+    design_result={"efficiency": 0.85},
+    simulation_result={"transmission": 0.82},
+    detail_level="normal"
+)
+
+# 对话
+response = await orchestrator.chat(
+    message="如何提高设计效率？",
+    history=[{"role": "user", "content": "..."}],
+    use_rag=True
+)
+```
+
+### 数据模型
+
+```python
+from llm import DesignIntent, WorkflowSuggestion, DesignReport
+
+# 设计意图
+intent = DesignIntent(
+    device_type="grating_coupler",
+    target_specs={"wavelength": 1550, "efficiency": 0.8},
+    constraints={"fabrication": "standard"},
+    preferences={"model_preference": "hilab"},
+    confidence=0.9,
+    clarification_needed=[]
+)
+
+# 工作流建议
+workflow = WorkflowSuggestion(
+    pipeline_name="grating_coupler_hilab",
+    challenge="grating_coupler",
+    model_config={"type": "hilab"},
+    training_config={"epochs": 100},
+    optimization_config={"num_iterations": 50},
+    rationale="选择理由",
+    alternatives=["tnn", "mdn"]
+)
+
+# 设计报告
+report = DesignReport(
+    summary="设计达到了80%的耦合效率目标",
+    metrics_analysis={"efficiency": {"target": 0.8, "achieved": 0.82}},
+    design_features=["周期结构", "渐变槽深"],
+    potential_issues=["制造公差敏感"],
+    suggestions=["考虑添加金属反射层"]
+)
+```
+
+---
+
 ## REST API
 
 ### 基础 URL
@@ -1151,6 +1418,169 @@ GET /health
 }
 ```
 
+---
+
+### LLM API
+
+#### 对话
+
+```
+POST /api/llm/chat
+```
+
+请求体:
+```json
+{
+  "message": "设计一个1550nm的光栅耦合器",
+  "history": [
+    {"role": "user", "content": "你好"},
+    {"role": "assistant", "content": "你好！我是光子学设计助手..."}
+  ],
+  "use_rag": true
+}
+```
+
+响应:
+```json
+{
+  "response": "好的，我可以帮你设计1550nm的光栅耦合器...",
+  "success": true,
+  "error": null
+}
+```
+
+#### 流式对话
+
+```
+POST /api/llm/chat/stream
+```
+
+返回 SSE 流式响应：
+```
+data: {"content": "好的"}
+data: {"content": "，我"}
+data: {"content": "可以帮你..."}
+data: [DONE]
+```
+
+#### 解析设计意图
+
+```
+POST /api/llm/parse-intent
+```
+
+请求体:
+```json
+{
+  "user_input": "设计一个1550nm的光栅耦合器，效率目标80%",
+  "use_rag": true
+}
+```
+
+响应:
+```json
+{
+  "device_type": "grating_coupler",
+  "target_specs": {
+    "wavelength": 1550,
+    "efficiency": 0.8
+  },
+  "constraints": {},
+  "preferences": {},
+  "confidence": 0.9,
+  "clarification_needed": [],
+  "success": true
+}
+```
+
+#### 生成工作流配置
+
+```
+POST /api/llm/generate-workflow
+```
+
+请求体:
+```json
+{
+  "intent": {
+    "device_type": "grating_coupler",
+    "target_specs": {"wavelength": 1550, "efficiency": 0.8}
+  },
+  "use_rag": true
+}
+```
+
+响应:
+```json
+{
+  "pipeline_name": "grating_coupler_hilab",
+  "challenge": "grating_coupler",
+  "model_config": {
+    "type": "hilab",
+    "latent_dim": 32
+  },
+  "training_config": {
+    "epochs": 100,
+    "batch_size": 32
+  },
+  "optimization_config": {
+    "num_iterations": 50
+  },
+  "rationale": "HiLab 适合追求最优设计...",
+  "alternatives": ["tnn", "mdn"],
+  "success": true
+}
+```
+
+#### 解释设计结果
+
+```
+POST /api/llm/explain-results
+```
+
+请求体:
+```json
+{
+  "design_result": {
+    "efficiency": 0.85,
+    "design_path": "outputs/design.pt"
+  },
+  "simulation_result": {
+    "transmission": 0.82,
+    "reflection": 0.05
+  },
+  "detail_level": "normal"
+}
+```
+
+响应:
+```json
+{
+  "summary": "设计达到了80%的耦合效率目标，实际效率为85%...",
+  "metrics_analysis": {
+    "efficiency": {"target": 0.8, "achieved": 0.85}
+  },
+  "design_features": ["周期性结构", "渐变槽深"],
+  "potential_issues": ["制造公差敏感"],
+  "suggestions": ["考虑添加金属反射层提高效率"],
+  "success": true
+}
+```
+
+#### LLM 健康检查
+
+```
+GET /api/llm/health
+```
+
+响应:
+```json
+{
+  "status": "healthy",
+  "assistant_initialized": true
+}
+```
+
 #### 系统信息
 
 ```
@@ -1206,6 +1636,12 @@ class ConfigError(HIPhotonicsError):
 
 class DataError(HIPhotonicsError):
     """数据相关错误"""
+
+class LLMError(HIPhotonicsError):
+    """LLM 相关错误"""
+
+class RAGError(HIPhotonicsError):
+    """RAG 服务相关错误"""
 ```
 
 ### 错误响应格式
