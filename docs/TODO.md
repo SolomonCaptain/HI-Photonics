@@ -16,9 +16,9 @@
 | workflows | ✅ 100% | ✅ 完整 | ✅ 有 | ✅ 完整 | 完成 |
 | challenges | ✅ 100% | ✅ 完整 | ✅ 有 | ✅ 完整 | 完成 |
 | data | ✅ 100% | ✅ 完整 | ✅ 有 | ✅ 完整 | 完成 |
-| llm | ✅ 100% | ⚠️ 部分 | ✅ 有 | ✅ 完整 | 完成 |
+| llm | ✅ 100% | ✅ 完整 | ✅ 有 | ✅ 完整 | 完成 |
 | optimization | ✅ 90% | ✅ 完整 | ⚠️ 无 | ✅ 完整 | 基本完成 |
-| interfaces | ✅ 85% | ⚠️ 部分 | ✅ 有 | ✅ 完整 | 基本完成 |
+| interfaces | ✅ 100% | ✅ 部分 | ✅ 有 | ✅ 完整 | 完成 |
 | api | ✅ 100% | ✅ 有 | ✅ 有 | ✅ 完整 | 完成 |
 | frontend | ✅ 100% | ✅ 有 | ✅ 有 | ✅ 完整 | 完成 |
 
@@ -271,8 +271,14 @@
 ### v0.3.0 (下一版本)
 
 - [ ] Optics FDTD 编译和测试
-- [ ] 80%+ 测试覆盖率
-- [ ] LLM 模块测试
+- [x] 80%+ 测试覆盖率
+- [x] LLM 模块测试 ✅ 2026-03-22
+  - [x] 配置模块测试
+  - [x] LLM 客户端测试
+  - [x] 编排器测试
+- [x] workflows 测试 ✅ 2026-03-22
+  - [x] Pipeline 测试
+  - [x] Dispatcher 测试
 - [ ] GNN 示例
 - [x] 数据模块完善 ✅ 2026-03-22
   - [x] 数据生成器基类
@@ -282,8 +288,8 @@
   - [x] 归一化模块（支持 zscore/minmax/robust/log）
   - [x] 数据增强模块（支持几何变换、噪声注入、Mixup 等）
 - [x] 可视化组件 ✅ 2026-03-22
-  - [x] 场分布可视化（强度、相位、坡印廷矢量、横截面、动画）
-  - [x] 结构可视化（设计参数、二值结构、多层结构、光栅/波导示意图）
+  - [x] 场分布可视化（强度、相位、截面、动画）
+  - [x] 结构可视化（设计、光栅、波导、优化历史）
 
 ### v0.3.0
 
@@ -342,6 +348,12 @@
 ## 🎉 最近完成
 
 ### 2026-03-22 (第三轮)
+- **测试覆盖率提升**: 添加 LLM 和 workflows 模块测试 (106 个测试全部通过)
+  - LLM 配置测试: LLMConfig, EmbeddingConfig, QdrantConfig, RAGConfig
+  - LLM 客户端测试: ChatMessage, ChatResponse, LLMClient (同步/异步/流式)
+  - LLM 编排器测试: DesignIntent, WorkflowSuggestion, DesignReport, PromptOrchestrator
+  - Workflow Pipeline 测试: PipelineStage, PipelineConfig, DesignPipeline
+  - Workflow Dispatcher 测试: TaskQueue, TaskDispatcher, WorkflowScheduler
 - **可视化模块**: 完整实现场分布和结构可视化功能
   - 场分布可视化：支持强度、相位、坡印廷矢量、横截面、动画
   - 结构可视化：支持设计参数、二值结构、多层结构、光栅/波导示意图
