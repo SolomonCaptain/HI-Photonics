@@ -83,6 +83,23 @@ except ImportError:
     GDSLayer = None
     GDSConfig = None
 
+# 可视化模块
+from .visualization.field import (
+    FieldVisualizer,
+    FieldPlotConfig,
+    plot_field,
+    plot_intensity,
+    create_field_visualizer
+)
+
+from .visualization.structure import (
+    StructureVisualizer,
+    StructurePlotConfig,
+    plot_design,
+    plot_binary_structure,
+    create_structure_visualizer
+)
+
 __all__ = [
     # 仿真器基类
     'SimulatorInterface',
@@ -128,4 +145,18 @@ __all__ = [
     'GDSExporter',
     'GDSLayer',
     'GDSConfig',
+    
+    # 可视化 - 场分布
+    'FieldVisualizer',
+    'FieldPlotConfig',
+    'plot_field',
+    'plot_intensity',
+    'create_field_visualizer',
+    
+    # 可视化 - 结构
+    'StructureVisualizer',
+    'StructurePlotConfig',
+    'plot_design',
+    'plot_binary_structure',
+    'create_structure_visualizer',
 ]

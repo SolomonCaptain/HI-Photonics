@@ -21,6 +21,7 @@ interfaces/__pycache__/
 interfaces/foundry/__pycache__/
 interfaces/simulators/__pycache__/
 interfaces/simulators/optics/__pycache__/
+interfaces/visualization/__pycache__/
 llm/__pycache__/
 tests/test_core/__pycache__/
 tests/test_interfaces/__pycache__/
