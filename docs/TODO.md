@@ -162,11 +162,13 @@
 
 ## 🟠 中优先级 (P1)
 
-### 4. 数据模块完善
-- [ ] 实现 `data/generators/active_learning.py`
-- [ ] 实现 `data/generators/multi_fidelity.py`
-- [ ] 完善 `data/preprocess/normalization.py`
-- [ ] 完善 `data/preprocess/augmentation.py`
+### 4. 数据模块完善 ✅ 已完成
+- [x] 实现 `data/generators/base.py` - 数据生成器基类
+- [x] 实现 `data/generators/random_sampling.py` - 随机采样生成器
+- [x] 实现 `data/generators/active_learning.py` - 主动学习生成器
+- [x] 实现 `data/generators/multi_fidelity.py` - 多保真度生成器
+- [x] 完善 `data/preprocess/normalization.py` - 归一化模块
+- [x] 完善 `data/preprocess/augmentation.py` - 数据增强模块
 
 ### 5. 仿真器增强
 - [ ] 实现仿真结果缓存机制
@@ -258,11 +260,17 @@
 
 ### v0.3.0 (下一版本)
 
-- [ ] Optics FDTD 编译和测试
+- [x] Optics FDTD 编译和测试
 - [ ] 80%+ 测试覆盖率
 - [ ] LLM 模块测试
 - [ ] GNN 示例
-- [ ] 数据模块完善
+- [x] 数据模块完善 ✅ 2026-03-22
+  - [x] 数据生成器基类
+  - [x] 随机采样生成器（支持 uniform/LHS/Sobol/Halton）
+  - [x] 主动学习生成器（支持多种采集函数）
+  - [x] 多保真度生成器（支持 cascaded/adaptive 分配策略）
+  - [x] 归一化模块（支持 zscore/minmax/robust/log）
+  - [x] 数据增强模块（支持几何变换、噪声注入、Mixup 等）
 - [ ] 可视化组件
 
 ### v0.3.0
@@ -321,7 +329,15 @@
 
 ## 🎉 最近完成
 
-### 2026-03-22
+### 2026-03-22 (第二轮)
+- **数据模块完善**: 完整实现数据生成和预处理功能
+  - 随机采样生成器：支持 uniform、Latin Hypercube、Sobol、Halton 序列
+  - 主动学习生成器：支持 uncertainty、EI、UCB、Thompson Sampling 采集函数
+  - 多保真度生成器：支持 fixed、adaptive、cascaded 分配策略
+  - 归一化模块：支持 zscore、minmax、robust、log 方法
+  - 数据增强模块：支持几何变换、噪声注入、Mixup、Cutout 等
+
+### 2026-03-22 (第一轮)
 - **LLM 智能助手模块**: 完整实现自然语言设计辅助功能
 - **RAG 服务**: 知识检索增强，支持向量数据库
 - **LLM API**: 完整的 LLM 助手 API 端点

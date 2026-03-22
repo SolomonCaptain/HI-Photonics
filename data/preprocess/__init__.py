@@ -1,32 +1,57 @@
 """
 数据预处理模块
+
+提供数据归一化和增强功能。
 """
 
 from data.preprocess.normalization import (
     Normalizer,
-    MinMaxNormalizer,
-    StandardScaler,
-    RobustScaler,
-    BatchNormalizer
+    NormalizationStats,
+    MultiFieldNormalizer,
+    BatchNormalizer,
+    create_normalizer,
+    normalize_data
 )
 
 from data.preprocess.augmentation import (
-    DesignAugmenter,
-    FlipAugmenter,
-    NoiseAugmenter,
-    BlurAugmenter,
-    CombinedAugmenter
+    AugmentationBase,
+    AugmentationConfig,
+    HorizontalFlip,
+    VerticalFlip,
+    Rotation,
+    GaussianNoise,
+    RandomCrop,
+    Mixup,
+    Cutout,
+    RandomErasing,
+    PhysicsAwareAugmentation,
+    CompositeAugmentation,
+    DataAugmenter,
+    create_augmenter
 )
 
 __all__ = [
+    # 归一化
     'Normalizer',
-    'MinMaxNormalizer',
-    'StandardScaler',
-    'RobustScaler',
+    'NormalizationStats',
+    'MultiFieldNormalizer',
     'BatchNormalizer',
-    'DesignAugmenter',
-    'FlipAugmenter',
-    'NoiseAugmenter',
-    'BlurAugmenter',
-    'CombinedAugmenter'
+    'create_normalizer',
+    'normalize_data',
+    
+    # 数据增强
+    'AugmentationBase',
+    'AugmentationConfig',
+    'HorizontalFlip',
+    'VerticalFlip',
+    'Rotation',
+    'GaussianNoise',
+    'RandomCrop',
+    'Mixup',
+    'Cutout',
+    'RandomErasing',
+    'PhysicsAwareAugmentation',
+    'CompositeAugmentation',
+    'DataAugmenter',
+    'create_augmenter'
 ]
