@@ -9,9 +9,6 @@ FROM node:20-alpine AS builder
 # 设置工作目录
 WORKDIR /app
 
-# 设置 Node 环境
-ENV NODE_ENV=production
-
 # 复制 package 文件
 COPY frontend/package*.json ./
 
