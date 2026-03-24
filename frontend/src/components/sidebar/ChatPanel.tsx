@@ -14,15 +14,20 @@ import {
     Fade,
     CircularProgress,
     Tooltip,
+    ToggleButtonGroup,
+    ToggleButton,
+    Divider,
 } from '@mui/material';
 import {
     Send,
     Clear,
     Lightbulb,
     Psychology,
+    Storage,
+    CheckCircle,
 } from '@mui/icons-material';
 import { useLLMStore } from '../../store/llmStore';
-import type { ChatMessage } from '../../utils/llmApi';
+import type { ChatMessage, VectorDBType } from '../../utils/llmApi';
 
 // 快捷提示词
 const QUICK_PROMPTS = [
@@ -132,7 +137,22 @@ const ChatPanel: React.FC = () => {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
-    const { messages, isLoading, sendMessage, clearMessages } = useLLMStore();
+    const { 
+        messages, 
+        isLoading, 
+        sendMessage, 
+        clearMessages,
+        vectorDBType,
+        vectorDBInfo,
+        isVectorDBLoading,
+        fetchVectorDBInfo,
+        switchVectorDB,
+    } = useLLMStore();
+
+    // 初始化时获取向量数据库信息
+    useEffect(() => {
+        fetchVectorDBInfo();
+    }, [fetchVectorDBInfo]);
 
     // 自动滚动到底部
     useEffect(() => {
@@ -159,6 +179,13 @@ const ChatPanel: React.FC = () => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             handleSend();
+        }
+    };
+
+    // 处理向量数据库切换
+    const handleVectorDBChange = (_event: React.MouseEvent<HTMLElement>, newType: VectorDBType | null) => {
+        if (newType && newType !== vectorDBType) {
+            switchVectorDB(newType);
         }
     };
 
@@ -197,6 +224,92 @@ const ChatPanel: React.FC = () => {
                         <Clear fontSize="small" />
                     </IconButton>
                 </Tooltip>
+            </Box>
+
+            {/* 向量数据库选择 */}
+            <Box
+                sx={{
+                    p: 1.5,
+                    borderBottom: '1px solid #2d3748',
+                    background: 'rgba(0, 0, 0, 0.1)',
+                }}
+            >
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Storage sx={{ fontSize: 16, color: '#8b5cf6' }} />
+                        <Typography variant="body2" sx={{ color: '#94a3b8' }}>
+                            向量数据库
+                        </Typography>
+                        {vectorDBInfo?.collection_info && (
+                            <Chip
+                                size="small"
+                                label={`${vectorDBInfo.collection_info.count || vectorDBInfo.collection_info.vectors_count || 0} 条记录`}
+                                sx={{
+                                    height: 20,
+                                    fontSize: '0.65rem',
+                                    background: 'rgba(139, 92, 246, 0.2)',
+                                    color: '#a78bfa',
+                                }}
+                            />
+                        )}
+                    </Box>
+                    {isVectorDBLoading && (
+                        <CircularProgress size={14} sx={{ color: '#8b5cf6' }} />
+                    )}
+                </Box>
+                <ToggleButtonGroup
+                    value={vectorDBType}
+                    exclusive
+                    onChange={handleVectorDBChange}
+                    size="small"
+                    disabled={isVectorDBLoading}
+                    sx={{
+                        width: '100%',
+                        '& .MuiToggleButtonGroup-grouped': {
+                            border: '1px solid #2d3748',
+                            borderRadius: 1,
+                            flex: 1,
+                            color: '#94a3b8',
+                            fontSize: '0.75rem',
+                            py: 0.5,
+                            '&.Mui-selected': {
+                                background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.3) 0%, rgba(124, 58, 237, 0.3) 100%)',
+                                border: '1px solid rgba(139, 92, 246, 0.5)',
+                                color: '#e2e8f0',
+                            },
+                            '&:hover': {
+                                background: 'rgba(139, 92, 246, 0.1)',
+                                border: '1px solid rgba(139, 92, 246, 0.3)',
+                            },
+                        },
+                    }}
+                >
+                    <ToggleButton value="qdrant">
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                            {vectorDBType === 'qdrant' && <CheckCircle sx={{ fontSize: 12 }} />}
+                            Qdrant
+                        </Box>
+                    </ToggleButton>
+                    <ToggleButton value="chroma">
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                            {vectorDBType === 'chroma' && <CheckCircle sx={{ fontSize: 12 }} />}
+                            Chroma
+                        </Box>
+                    </ToggleButton>
+                </ToggleButtonGroup>
+                <Typography
+                    variant="caption"
+                    sx={{
+                        display: 'block',
+                        mt: 0.5,
+                        color: '#64748b',
+                        fontSize: '0.65rem',
+                    }}
+                >
+                    {vectorDBType === 'qdrant' 
+                        ? '高性能分布式向量数据库，适合大规模部署' 
+                        : '轻量级开源向量数据库，支持本地持久化'}
+                </Typography>
             </Box>
 
             {/* 快捷提示词 */}

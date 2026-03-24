@@ -57,6 +57,45 @@ export interface ReportResponse {
     error?: string;
 }
 
+// ===== 向量数据库类型定义 =====
+
+export type VectorDBType = 'qdrant' | 'chroma';
+
+export interface VectorDBTypeInfo {
+    id: VectorDBType;
+    name: string;
+    description: string;
+    features: string[];
+}
+
+export interface VectorDBInfo {
+    current_type: VectorDBType;
+    available_types: VectorDBType[];
+    collection_info?: {
+        name: string;
+        count?: number;
+        vectors_count?: number;
+        points_count?: number;
+        status?: string;
+        db_type?: string;
+        persistent?: boolean;
+        persist_directory?: string;
+    } | null;
+    success: boolean;
+    error?: string;
+}
+
+export interface SwitchVectorDBRequest {
+    vector_db_type: VectorDBType;
+}
+
+export interface SwitchVectorDBResponse {
+    previous_type: VectorDBType;
+    current_type: VectorDBType;
+    success: boolean;
+    error?: string;
+}
+
 // ===== LLM API =====
 
 export const llmApi = {
@@ -103,6 +142,36 @@ export const llmApi = {
      */
     healthCheck: () =>
         apiClient.get('/api/llm/health'),
+
+    // ===== 向量数据库 API =====
+
+    /**
+     * 获取当前向量数据库信息
+     */
+    getVectorDBInfo: () =>
+        apiClient.get<VectorDBInfo>('/api/llm/vector-db/info'),
+
+    /**
+     * 切换向量数据库
+     */
+    switchVectorDB: (vectorDBType: VectorDBType) =>
+        apiClient.post<SwitchVectorDBResponse>('/api/llm/vector-db/switch', {
+            vector_db_type: vectorDBType,
+        }),
+
+    /**
+     * 初始化向量数据库
+     */
+    initializeVectorDB: (recreate = false) =>
+        apiClient.post('/api/llm/vector-db/initialize', null, {
+            params: { recreate },
+        }),
+
+    /**
+     * 获取可用的向量数据库类型
+     */
+    getAvailableVectorDBTypes: () =>
+        apiClient.get<{ types: VectorDBTypeInfo[] }>('/api/llm/vector-db/types'),
 };
 
 export default llmApi;

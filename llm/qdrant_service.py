@@ -14,32 +14,10 @@ from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
 
 from llm.config import QdrantConfig
+from llm.vector_db_base import VectorDBBase, KnowledgeDocument, SearchResult
 
 
-@dataclass
-class KnowledgeDocument:
-    """知识文档"""
-    id: str
-    content: str
-    embedding: Optional[np.ndarray] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    # 元数据字段
-    source: str = ""
-    category: str = ""
-    title: str = ""
-
-
-@dataclass
-class SearchResult:
-    """检索结果"""
-    id: str
-    content: str
-    score: float
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-
-class QdrantService:
+class QdrantService(VectorDBBase):
     """
     Qdrant 向量数据库服务
     
@@ -63,6 +41,11 @@ class QdrantService:
     @property
     def collection_name(self) -> str:
         return self.config.collection
+    
+    @property
+    def db_type(self) -> str:
+        """返回数据库类型标识"""
+        return "qdrant"
     
     def connect(self) -> bool:
         """

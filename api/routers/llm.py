@@ -12,12 +12,14 @@ import asyncio
 import json
 
 from llm.orchestrator import LLMAssistant, DesignIntent, WorkflowSuggestion, DesignReport
-from llm.config import LLMAssistantConfig
+from llm.config import LLMAssistantConfig, VectorDBType
+from llm.rag_service import RAGService
 
 router = APIRouter(prefix="/llm", tags=["LLM"])
 
 # 全局 LLM 助手实例
 _assistant: Optional[LLMAssistant] = None
+_rag_service: Optional[RAGService] = None
 
 
 def get_assistant() -> LLMAssistant:
@@ -27,6 +29,15 @@ def get_assistant() -> LLMAssistant:
         config = LLMAssistantConfig()
         _assistant = LLMAssistant(config)
     return _assistant
+
+
+def get_rag_service() -> RAGService:
+    """获取 RAG 服务实例"""
+    global _rag_service
+    if _rag_service is None:
+        config = LLMAssistantConfig()
+        _rag_service = RAGService(config)
+    return _rag_service
 
 
 # ===== 请求/响应模型 =====
@@ -302,3 +313,144 @@ async def llm_health():
             "status": "unhealthy",
             "error": str(e)
         }
+
+
+# ===== 向量数据库 API =====
+
+class VectorDBInfo(BaseModel):
+    """向量数据库信息"""
+    current_type: str
+    available_types: List[str]
+    collection_info: Optional[Dict[str, Any]] = None
+    success: bool = True
+    error: Optional[str] = None
+
+
+class SwitchVectorDBRequest(BaseModel):
+    """切换向量数据库请求"""
+    vector_db_type: str  # "qdrant" or "chroma"
+
+
+class SwitchVectorDBResponse(BaseModel):
+    """切换向量数据库响应"""
+    previous_type: str
+    current_type: str
+    success: bool = True
+    error: Optional[str] = None
+
+
+@router.get("/vector-db/info", response_model=VectorDBInfo)
+async def get_vector_db_info():
+    """
+    获取当前向量数据库信息
+    
+    返回当前使用的向量数据库类型、可用类型和集合信息
+    """
+    try:
+        rag = get_rag_service()
+        collection_info = rag.vector_db.get_collection_info()
+        
+        return VectorDBInfo(
+            current_type=rag.vector_db_type,
+            available_types=[VectorDBType.QDRANT, VectorDBType.CHROMA],
+            collection_info=collection_info,
+            success=True
+        )
+    except Exception as e:
+        return VectorDBInfo(
+            current_type="",
+            available_types=[VectorDBType.QDRANT, VectorDBType.CHROMA],
+            collection_info=None,
+            success=False,
+            error=str(e)
+        )
+
+
+@router.post("/vector-db/switch", response_model=SwitchVectorDBResponse)
+async def switch_vector_db(request: SwitchVectorDBRequest):
+    """
+    切换向量数据库
+    
+    在 Qdrant 和 Chroma 之间切换
+    """
+    try:
+        rag = get_rag_service()
+        previous_type = rag.vector_db_type
+        
+        # 验证类型
+        if request.vector_db_type not in [VectorDBType.QDRANT, VectorDBType.CHROMA]:
+            return SwitchVectorDBResponse(
+                previous_type=previous_type,
+                current_type=previous_type,
+                success=False,
+                error=f"不支持的向量数据库类型: {request.vector_db_type}"
+            )
+        
+        # 切换向量数据库
+        success = rag.switch_vector_db(request.vector_db_type)
+        
+        if success:
+            return SwitchVectorDBResponse(
+                previous_type=previous_type,
+                current_type=rag.vector_db_type,
+                success=True
+            )
+        else:
+            return SwitchVectorDBResponse(
+                previous_type=previous_type,
+                current_type=previous_type,
+                success=False,
+                error="切换向量数据库失败"
+            )
+    except Exception as e:
+        return SwitchVectorDBResponse(
+            previous_type="",
+            current_type="",
+            success=False,
+            error=str(e)
+        )
+
+
+@router.post("/vector-db/initialize")
+async def initialize_vector_db(recreate: bool = False):
+    """
+    初始化向量数据库
+    
+    Args:
+        recreate: 是否重建集合（清空现有数据）
+    """
+    try:
+        rag = get_rag_service()
+        success = rag.initialize(recreate=recreate)
+        
+        return {
+            "success": success,
+            "vector_db_type": rag.vector_db_type,
+            "message": "向量数据库初始化成功" if success else "向量数据库初始化失败"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.get("/vector-db/types")
+async def get_available_vector_db_types():
+    """获取可用的向量数据库类型"""
+    return {
+        "types": [
+            {
+                "id": VectorDBType.QDRANT,
+                "name": "Qdrant",
+                "description": "高性能分布式向量数据库，适合大规模部署",
+                "features": ["分布式", "高性能", "云原生"]
+            },
+            {
+                "id": VectorDBType.CHROMA,
+                "name": "Chroma",
+                "description": "轻量级开源向量数据库，支持本地持久化",
+                "features": ["轻量级", "本地存储", "易部署"]
+            }
+        ]
+    }

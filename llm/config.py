@@ -97,12 +97,46 @@ class RAGConfig:
 
 
 @dataclass
+class ChromaConfig:
+    """Chroma 向量数据库配置"""
+    # 持久化目录
+    persist_directory: str = field(default_factory=lambda: os.getenv(
+        "CHROMA_PERSIST_DIR", str(Path(__file__).parent.parent / "data" / "chroma_db")
+    ))
+    collection: str = field(default_factory=lambda: os.getenv(
+        "CHROMA_COLLECTION", "hi_photonics_knowledge"
+    ))
+    
+    # 向量配置
+    vector_size: int = 4096  # 与 Embedding 维度一致
+    distance_metric: str = "cosine"
+    
+    # 是否使用持久化存储（False 则使用内存模式）
+    persistent: bool = field(default_factory=lambda: os.getenv(
+        "CHROMA_PERSISTENT", "true"
+    ).lower() == "true")
+
+
+# 向量数据库类型枚举
+class VectorDBType:
+    """向量数据库类型"""
+    QDRANT = "qdrant"
+    CHROMA = "chroma"
+
+
+@dataclass
 class LLMAssistantConfig:
     """LLM 助手完整配置"""
     llm: LLMConfig = field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     qdrant: QdrantConfig = field(default_factory=QdrantConfig)
+    chroma: ChromaConfig = field(default_factory=ChromaConfig)
     rag: RAGConfig = field(default_factory=RAGConfig)
+    
+    # 向量数据库选择: "qdrant" 或 "chroma"
+    vector_db_type: str = field(default_factory=lambda: os.getenv(
+        "VECTOR_DB_TYPE", VectorDBType.QDRANT
+    ))
     
     # 知识库路径
     knowledge_dir: Path = field(default_factory=lambda: Path(__file__).parent / "knowledge")
@@ -123,6 +157,10 @@ class LLMAssistantConfig:
         if not self.embedding.is_configured:
             errors.append("Embedding API Key 未配置 (EMBEDDING_API_KEY)")
         
+        # 验证向量数据库类型
+        if self.vector_db_type not in [VectorDBType.QDRANT, VectorDBType.CHROMA]:
+            errors.append(f"不支持的向量数据库类型: {self.vector_db_type}")
+        
         if errors:
             print("配置警告:")
             for error in errors:
@@ -130,6 +168,12 @@ class LLMAssistantConfig:
             return False
         
         return True
+    
+    def get_vector_db_config(self):
+        """获取当前选择的向量数据库配置"""
+        if self.vector_db_type == VectorDBType.CHROMA:
+            return self.chroma
+        return self.qdrant
 
 
 # 全局配置实例

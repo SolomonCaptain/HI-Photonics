@@ -24,15 +24,24 @@ from llm.config import (
     LLMConfig,
     EmbeddingConfig,
     QdrantConfig,
+    ChromaConfig,
     RAGConfig,
     LLMAssistantConfig,
+    VectorDBType,
     get_config,
     reload_config,
+)
+
+from llm.vector_db_base import (
+    VectorDBBase,
+    KnowledgeDocument,
+    SearchResult,
 )
 
 from llm.llm_client import LLMClient
 from llm.embedding_client import EmbeddingClient
 from llm.qdrant_service import QdrantService
+from llm.chroma_service import ChromaService
 from llm.rag_service import RAGService
 from llm.orchestrator import PromptOrchestrator, LLMAssistant
 
@@ -41,14 +50,22 @@ __all__ = [
     "LLMConfig",
     "EmbeddingConfig",
     "QdrantConfig",
+    "ChromaConfig",
     "RAGConfig",
     "LLMAssistantConfig",
+    "VectorDBType",
     "get_config",
     "reload_config",
+    # 向量数据库基类和数据类型
+    "VectorDBBase",
+    "KnowledgeDocument",
+    "SearchResult",
     # 客户端
     "LLMClient",
     "EmbeddingClient",
+    # 向量数据库服务
     "QdrantService",
+    "ChromaService",
     "RAGService",
     # 核心服务
     "PromptOrchestrator",

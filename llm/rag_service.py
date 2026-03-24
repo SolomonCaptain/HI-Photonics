@@ -1,7 +1,8 @@
 """
 RAG 知识检索服务
 
-结合 Embedding 和 Qdrant 实现知识检索增强生成。
+结合 Embedding 和向量数据库实现知识检索增强生成。
+支持 Qdrant 和 Chroma 两种向量数据库。
 """
 
 from typing import Optional, List, Dict, Any
@@ -10,9 +11,11 @@ from pathlib import Path
 import re
 import json
 
-from llm.config import RAGConfig, LLMAssistantConfig
+from llm.config import RAGConfig, LLMAssistantConfig, VectorDBType
 from llm.embedding_client import EmbeddingClient, EmbeddingResult
-from llm.qdrant_service import QdrantService, KnowledgeDocument, SearchResult
+from llm.vector_db_base import VectorDBBase, KnowledgeDocument, SearchResult
+from llm.qdrant_service import QdrantService
+from llm.chroma_service import ChromaService
 
 
 @dataclass
@@ -73,6 +76,7 @@ class RAGService:
     RAG 知识检索服务
     
     提供知识库的索引和检索功能。
+    支持多种向量数据库（Qdrant 和 Chroma）。
     
     示例:
         rag = RAGService(config)
@@ -89,18 +93,75 @@ class RAGService:
         self,
         config: Optional[LLMAssistantConfig] = None,
         embedding_client: Optional[EmbeddingClient] = None,
-        qdrant_service: Optional[QdrantService] = None
+        vector_db_service: Optional[VectorDBBase] = None,
+        vector_db_type: Optional[str] = None
     ):
         self.config = config or LLMAssistantConfig()
         self.rag_config = self.config.rag
         
         self.embedding_client = embedding_client or EmbeddingClient(self.config.embedding)
-        self.qdrant_service = qdrant_service or QdrantService(self.config.qdrant)
+        
+        # 确定向量数据库类型
+        self._vector_db_type = vector_db_type or self.config.vector_db_type
+        
+        # 创建向量数据库服务
+        if vector_db_service:
+            self._vector_db = vector_db_service
+        else:
+            self._vector_db = self._create_vector_db_service()
         
         self.splitter = TextSplitter(
             chunk_size=self.rag_config.chunk_size,
             chunk_overlap=self.rag_config.chunk_overlap
         )
+    
+    def _create_vector_db_service(self) -> VectorDBBase:
+        """根据配置创建向量数据库服务"""
+        if self._vector_db_type == VectorDBType.CHROMA:
+            return ChromaService(self.config.chroma)
+        else:
+            # 默认使用 Qdrant
+            return QdrantService(self.config.qdrant)
+    
+    @property
+    def vector_db(self) -> VectorDBBase:
+        """获取当前向量数据库服务"""
+        return self._vector_db
+    
+    @property
+    def vector_db_type(self) -> str:
+        """获取当前向量数据库类型"""
+        return self._vector_db_type
+    
+    @property
+    def qdrant_service(self) -> QdrantService:
+        """向后兼容属性 - 获取 Qdrant 服务"""
+        if isinstance(self._vector_db, QdrantService):
+            return self._vector_db
+        raise AttributeError("当前使用的不是 Qdrant 向量数据库")
+    
+    def switch_vector_db(self, vector_db_type: str) -> bool:
+        """
+        切换向量数据库
+        
+        Args:
+            vector_db_type: 向量数据库类型 ("qdrant" 或 "chroma")
+            
+        Returns:
+            是否切换成功
+        """
+        if vector_db_type not in [VectorDBType.QDRANT, VectorDBType.CHROMA]:
+            print(f"不支持的向量数据库类型: {vector_db_type}")
+            return False
+        
+        if vector_db_type == self._vector_db_type:
+            return True  # 已经是当前类型
+        
+        # 切换向量数据库
+        self._vector_db_type = vector_db_type
+        self._vector_db = self._create_vector_db_service()
+        
+        return True
     
     def initialize(self, recreate: bool = False) -> bool:
         """
@@ -112,7 +173,7 @@ class RAGService:
         Returns:
             是否成功
         """
-        return self.qdrant_service.initialize_collection(recreate=recreate)
+        return self._vector_db.initialize_collection(recreate=recreate)
     
     async def index_document(
         self,
@@ -158,7 +219,7 @@ class RAGService:
             )
             documents.append(doc)
         
-        return self.qdrant_service.upsert(documents)
+        return self._vector_db.upsert(documents)
     
     async def index_documents(
         self,
@@ -272,7 +333,7 @@ class RAGService:
         query_embedding = await self.embedding_client.embed(query)
         
         # 检索相关文档
-        results = self.qdrant_service.search(
+        results = self._vector_db.search(
             query_vector=query_embedding.embedding,
             top_k=top_k,
             score_threshold=score_threshold,
@@ -303,7 +364,7 @@ class RAGService:
     async def close(self):
         """关闭连接"""
         await self.embedding_client.close()
-        self.qdrant_service.disconnect()
+        self._vector_db.disconnect()
     
     async def __aenter__(self):
         return self
