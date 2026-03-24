@@ -15,6 +15,7 @@ data/__pycache__/
 data/generators/__pycache__/
 data/loaders/__pycache__/
 data/preprocess/__pycache__/
+docs/report/
 examples/__pycache__/
 hi_photonics/__pycache__/
 hi_photonics.egg-info

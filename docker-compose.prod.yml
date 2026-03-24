@@ -1,0 +1,90 @@
+services:
+  backend:
+    image: crpi-rh8f15crvllyzo7m.cn-beijing.personal.cr.aliyuncs.com/hi-photonics/backend:latest
+    container_name: hi-photonics-backend
+    restart: unless-stopped
+    environment:
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_MODEL=${LLM_MODEL:-qwen-plus}
+      - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-https://api.siliconflow.cn/v1}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-8B}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-4096}
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-hi_photonics_knowledge}
+    volumes:
+      - ./inputs:/app/inputs:ro
+      - ./outputs:/app/outputs
+      - ./models/pretrained:/app/models/pretrained:ro
+    networks:
+      - hi-photonics-network
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+
+  frontend:
+    image: crpi-rh8f15crvllyzo7m.cn-beijing.personal.cr.aliyuncs.com/hi-photonics/frontend:latest
+    container_name: hi-photonics-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    networks:
+      - hi-photonics-network
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: hi-photonics-qdrant
+    restart: unless-stopped
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    volumes:
+      - qdrant-storage:/qdrant/storage
+    networks:
+      - hi-photonics-network
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:6333/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+
+networks:
+  hi-photonics-network:
+    driver: bridge
+    name: hi-photonics-network
+
+volumes:
+  qdrant-storage:
+    name: hi-photonics-qdrant-storage
